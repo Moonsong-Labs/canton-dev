@@ -1,0 +1,83 @@
+module Test where
+
+import Daml.Script
+import DA.Date (toDateUTC, addDays)
+import Main
+
+testInvoiceWorkflow : Script ()
+testInvoiceWorkflow = script do
+  seller <- allocatePartyWithHint "Seller" (PartyIdHint "Seller")
+  buyer <- allocatePartyWithHint "Buyer" (PartyIdHint "Buyer")
+
+  now <- getTime
+  let today = toDateUTC now
+      due = addDays today 30
+
+  inv <- submit seller do
+    createCmd Invoice with
+      seller
+      buyer
+      invoiceNumber = "TEST-001"
+      amount = 500.0
+      description = "Test invoice"
+      issueDate = today
+      dueDate = due
+      status = Pending
+
+  paidInv <- submit buyer do
+    exerciseCmd inv PayInvoice
+
+  return ()
+
+testCancelInvoice : Script ()
+testCancelInvoice = script do
+  seller <- allocatePartyWithHint "Seller" (PartyIdHint "Seller")
+  buyer <- allocatePartyWithHint "Buyer" (PartyIdHint "Buyer")
+
+  now <- getTime
+  let today = toDateUTC now
+      due = addDays today 30
+
+  inv <- submit seller do
+    createCmd Invoice with
+      seller
+      buyer
+      invoiceNumber = "TEST-002"
+      amount = 250.0
+      description = "Test cancellation"
+      issueDate = today
+      dueDate = due
+      status = Pending
+
+  cancelledInv <- submit seller do
+    exerciseCmd inv CancelInvoice
+
+  return ()
+
+testCannotPayCancelled : Script ()
+testCannotPayCancelled = script do
+  seller <- allocatePartyWithHint "Seller" (PartyIdHint "Seller")
+  buyer <- allocatePartyWithHint "Buyer" (PartyIdHint "Buyer")
+
+  now <- getTime
+  let today = toDateUTC now
+      due = addDays today 30
+
+  inv <- submit seller do
+    createCmd Invoice with
+      seller
+      buyer
+      invoiceNumber = "TEST-003"
+      amount = 100.0
+      description = "Test payment validation"
+      issueDate = today
+      dueDate = due
+      status = Pending
+
+  cancelledInv <- submit seller do
+    exerciseCmd inv CancelInvoice
+
+  submitMustFail buyer do
+    exerciseCmd cancelledInv PayInvoice
+
+  return ()
