@@ -6,7 +6,9 @@
   },
   "remoteUser": "daml",
   "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
-  "runArgs": ["--init"],
+  "runArgs": [
+    "--init"
+  ],
   "mounts": [
     "source=vscode-server-extensions,target=/home/daml/.vscode-server/extensions,type=volume"
   ],
@@ -26,9 +28,14 @@
         "terminal.integrated.defaultProfile.osx": "bash"
       }
     }
-  }
+  },
+  "forwardPorts": [
+    5011,
+    5012,
+    5021,
+    5022,
+    5018,
+    5019,
+    7500
+  ]
 }
-
-
-
-

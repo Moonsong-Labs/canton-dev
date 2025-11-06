@@ -2,8 +2,6 @@ FROM eclipse-temurin:17-jdk
 
 ENV DEBIAN_FRONTEND=noninteractive \
     TERM=dumb \
-    DAML_VERSION=2.10.2 \
-    DAML_PLATFORM=linux \
     NODE_VERSION=18
 
 RUN apt-get update && \
@@ -32,6 +30,9 @@ RUN useradd -m -u 1001 -s /bin/bash daml || true && \
 USER daml
 WORKDIR /home/daml
 
+# Install DAML SDK
+ARG DAML_VERSION=2.10.2
+ARG DAML_PLATFORM=linux
 RUN curl -L "https://github.com/digital-asset/daml/releases/download/v${DAML_VERSION}/daml-sdk-${DAML_VERSION}-${DAML_PLATFORM}.tar.gz" -o daml.tar.gz && \
     mkdir -p /home/daml/daml-sdk && \
     tar -xzf daml.tar.gz -C /home/daml/daml-sdk --strip-components=1 && \
@@ -53,6 +54,14 @@ RUN mkdir -p /home/daml/.vscode-server/extensions && \
 RUN cp "/home/daml/.daml/sdk/${DAML_VERSION}/studio/daml-bundled.vsix" /home/daml/daml-bundled.vsix && \
     echo "✓ VSIX copied to /home/daml/daml-bundled.vsix for manual installation"
 
-ENV PATH="/home/daml/.daml/bin:${PATH}"
+# Install Canton (open-source)
+ARG CANTON_VERSION=2.10.2
+ENV CANTON_HOME=/home/daml/canton
+RUN curl -L "https://github.com/digital-asset/canton/releases/download/v${CANTON_VERSION}/canton-open-source-${CANTON_VERSION}.tar.gz" -o canton.tgz && \
+    mkdir -p "${CANTON_HOME}" && \
+    tar -xzf canton.tgz -C "${CANTON_HOME}" --strip-components=1 && \
+    rm canton.tgz
+
+ENV PATH="/home/daml/.daml/bin:${CANTON_HOME}/bin:${PATH}"
 
 WORKDIR /workspaces

@@ -1,4 +1,4 @@
-.PHONY: help dev-build dev-rebuild dev-shell build test clean verify
+.PHONY: help dev-build dev-rebuild dev-shell build test clean verify localnet deploy nav json-api
 
 PROJECT_PATH = examples/invoice-workflow
 CONTAINER_NAME = canton-daml-dev
@@ -21,6 +21,10 @@ help:
 	@echo "  make test         - Run DAML tests"
 	@echo "  make clean        - Clean build artifacts"
 	@echo "  make verify       - Verify container setup"
+	@echo "  make localnet     - Start Canton local network (p1, p2, local synchronizer)"
+	@echo "  make deploy       - Upload DAR to ledger (DAR=path [SCRIPT=Module:setup] [LEDGER_HOST] [LEDGER_PORT])"
+	@echo "  make nav          - Start Daml Navigator (NAV_PORT=7500 [LEDGER_HOST] [LEDGER_PORT])"
+	@echo "  make json-api     - Start Daml JSON API (HTTP_PORT=7575 [LEDGER_HOST] [LEDGER_PORT])"
 	@echo ""
 
 dev-build:
@@ -71,3 +75,25 @@ verify:
 		-w /workspaces/canton-dev \
 		$(IMAGE_NAME) \
 		bash -c "./verify-setup.sh"
+
+localnet:
+	@echo "Starting Canton local network..."
+	canton daemon --auto-connect-local -c infra/canton/localnet.conf
+
+deploy:
+	@if [ -z "$(DAR)" ]; then \
+		echo "Usage: make deploy DAR=path/to.dar [SCRIPT=Module:setup] [LEDGER_HOST=localhost LEDGER_PORT=5011]"; \
+		exit 2; \
+	fi
+	@SCRIPT_ARG=""; \
+	if [ -n "$(SCRIPT)" ]; then SCRIPT_ARG="--script $(SCRIPT)"; fi; \
+	LEDGER_HOST="$(LEDGER_HOST)" LEDGER_PORT="$(LEDGER_PORT)" \
+	bash scripts/deploy_dar.sh "$(DAR)" $$SCRIPT_ARG
+
+nav:
+	@LEDGER_HOST="$(LEDGER_HOST)" LEDGER_PORT="$(LEDGER_PORT)" NAV_PORT="$(NAV_PORT)" \
+	bash scripts/start_navigator.sh
+
+json-api:
+	@LEDGER_HOST="$(LEDGER_HOST)" LEDGER_PORT="$(LEDGER_PORT)" HTTP_PORT="$(HTTP_PORT)" \
+	bash scripts/start_json_api.sh
