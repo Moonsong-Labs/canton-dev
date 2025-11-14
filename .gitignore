@@ -1,0 +1,31 @@
+# IDE and editor files
+.vscode/
+.cursor/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# DAML/Canton generated files
+.daml/
+.build/
+log/
+navigator.log
+*.dar
+
+# Dependencies
+node_modules/
+dist/
+build/
+
+# Local development
+examples/
+*.log
+.env
+.env.local
+
+# Test artifacts
+coverage/
+.nyc_output/
+/tmp/
