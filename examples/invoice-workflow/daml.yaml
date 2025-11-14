@@ -4,7 +4,7 @@
 sdk-version: 2.10.2
 name: invoice-workflow
 source: daml
-init-script: Main:setup
+init-script: InvoiceWithTokens:setupInvoiceWithTokens
 version: 0.0.1
 dependencies:
   - daml-prim

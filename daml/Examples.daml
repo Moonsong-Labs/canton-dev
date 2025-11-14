@@ -1,0 +1,11 @@
+{-# OPTIONS_GHC -Wno-unused-imports #-}
+module Examples where
+
+import Daml.Script
+import qualified InvoiceWithTokens as InvoiceWithTokens
+import qualified Token as Token
+
+-- | No-op script so `daml build` succeeds even if you only want IDE support.
+noop : Script ()
+noop = script do
+  pure ()

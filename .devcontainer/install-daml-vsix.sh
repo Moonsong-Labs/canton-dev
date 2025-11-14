@@ -88,10 +88,11 @@ for i in $(seq 1 ${DAML_VSIX_WAIT_SECS:-30}); do
   sleep 1
 done
 
+# Force replace during installation
 if [[ -x "${CODE_SERVER_BIN:-}" ]]; then
   echo "[daml-vsix] Found VS Code server CLI: ${CODE_SERVER_BIN}"
-  if "${CODE_SERVER_BIN}" --install-extension "${VSIX_PATH}" >/dev/null 2>&1; then
-    echo "[daml-vsix] Installed DAML VSIX (or it was already installed)."
+  if "${CODE_SERVER_BIN}" --install-extension "${VSIX_PATH}" --force >/dev/null 2>&1; then
+    echo "[daml-vsix] Installed DAML VSIX with force (or it was already installed)."
   else
     echo "[daml-vsix] Extension install command returned non-zero (non-fatal)."
   fi
@@ -102,8 +103,8 @@ if [[ -x "${CODE_SERVER_BIN:-}" ]]; then
   fi
 elif [[ -f "${REMOTE_CLI_JS:-}" && -x "${REMOTE_NODE:-}" ]]; then
   echo "[daml-vsix] Found VS Code remote CLI: ${REMOTE_CLI_JS} (node: ${REMOTE_NODE})"
-  if "${REMOTE_NODE}" "${REMOTE_CLI_JS}" --install-extension "${VSIX_PATH}" >/dev/null 2>&1; then
-    echo "[daml-vsix] Installed DAML VSIX via remote CLI (or it was already installed)."
+  if "${REMOTE_NODE}" "${REMOTE_CLI_JS}" --install-extension "${VSIX_PATH}" --force >/dev/null 2>&1; then
+    echo "[daml-vsix] Installed DAML VSIX via remote CLI with force (or it was already installed)."
   else
     echo "[daml-vsix] Remote CLI install returned non-zero (non-fatal)."
   fi
@@ -143,13 +144,12 @@ else
   fi
 fi
 
-# Final verification
-echo "[daml-vsix] Final checks..."
-echo "[daml-vsix] Checking for installed extensions in common directories:"
+# Enhanced final verification
+echo "[daml-vsix] Enhanced final checks..."
 for dir in "$HOME/.vscode-server/extensions" "$HOME/.cursor-server/extensions"; do
   if [[ -d "$dir" ]]; then
     echo "[daml-vsix] Extensions in $dir:"
-    ls "$dir" 2>/dev/null | grep -i daml || echo "  No DAML extension found"
+    ls "$dir" | grep -i daml || echo "  No DAML extension found - installation may have failed!"
   fi
 done
 
