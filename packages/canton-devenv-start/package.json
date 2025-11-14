@@ -6,6 +6,20 @@
   "bin": {
     "canton-devenv-start": "bin/index.js"
   },
+  "files": [
+    "bin/",
+    "templates/",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/canton-dev/canton-dev.git",
+    "directory": "packages/canton-devenv-start"
+  },
+  "homepage": "https://github.com/canton-dev/canton-dev/tree/main/packages/canton-devenv-start",
+  "bugs": {
+    "url": "https://github.com/canton-dev/canton-dev/issues"
+  },
   "keywords": [
     "daml",
     "canton",
