@@ -4,7 +4,7 @@
   "description": "Scaffold a Canton DAML dev container workspace with one command",
   "license": "MIT",
   "bin": {
-    "canton-devenv-start": "bin/index.js"
+    "devenv-init": "bin/index.js"
   },
   "files": [
     "bin/",

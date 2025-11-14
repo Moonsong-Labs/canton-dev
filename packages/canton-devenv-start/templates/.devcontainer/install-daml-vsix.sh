@@ -1,160 +1,132 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Install the DAML VS Code/Cursor extension (bundled in the SDK) into the
-# remote server inside the devcontainer.
+# Install the DAML VS Code/Cursor extension (bundled in the SDK) inside
+# the devcontainer after VS Code/Cursor attaches.
 
-DAML_SDK_VERSION="${DAML_SDK_VERSION:-2.10.2}"
-VSIX_PATH="/home/daml/.daml/sdk/${DAML_SDK_VERSION}/studio/daml-bundled.vsix"
+DAML_SDK_VERSION="${DAML_SDK_VERSION:-3.4.7}"
 
-echo "[daml-vsix] Starting DAML VSIX setup"
-echo "[daml-vsix] DAML SDK Version: ${DAML_SDK_VERSION}"
-echo "[daml-vsix] Expected VSIX: ${VSIX_PATH}"
+log() { echo "[daml-vsix] $*"; }
 
-# Check if we have a local copy of the VSIX
-if [[ -f "/home/daml/daml-bundled.vsix" ]]; then
-  echo "[daml-vsix] Using local VSIX copy at /home/daml/daml-bundled.vsix"
-  VSIX_PATH="/home/daml/daml-bundled.vsix"
-elif [[ ! -f "$VSIX_PATH" ]]; then
-  echo "[daml-vsix] WARNING: VSIX not found at ${VSIX_PATH}"
-  echo "[daml-vsix] Checking for DAML installation..."
-
-  # Try to find DAML in common locations
-  if [[ -d "/home/daml/.daml" ]]; then
-    echo "[daml-vsix] Found .daml directory, checking SDK versions:"
-    ls -la /home/daml/.daml/sdk/ 2>/dev/null || echo "No SDK directory"
+find_vsix() {
+  # dpm 3.4+ layout (component version may differ from SDK version)
+  local cache_path
+  cache_path=$(find /home/daml/.dpm/cache/components/damlc -name "daml-bundled.vsix" -type f 2>/dev/null | head -n1 || true)
+  if [[ -n "$cache_path" ]]; then
+    log "Found VSIX in dpm cache: $cache_path"
+    VSIX_PATH="$cache_path"
+    return
   fi
 
-  # Since VSIX is not critical for container operation, just warn
-  echo "[daml-vsix] Extension will need manual installation"
-  echo "[daml-vsix] Continuing without VSIX installation..."
-  exit 0
-fi
+  # legacy paths / manual copy
+  local candidates=(
+    "/home/daml/.daml/sdk/${DAML_SDK_VERSION}/studio/daml-bundled.vsix"
+    "/home/daml/daml-bundled.vsix"
+  )
+  for candidate in "${candidates[@]}"; do
+    if [[ -f "$candidate" ]]; then
+      log "Found VSIX at: $candidate"
+      VSIX_PATH="$candidate"
+      return
+    fi
+  done
+}
 
 find_code_server() {
-  local candidates=(
-    "/home/daml/.vscode-server/bin"
-    "/home/daml/.vscode-server-insiders/bin"
-    "/home/daml/.cursor-server/bin"  # Added Cursor support
-    "$HOME/.vscode-server/bin"
-    "$HOME/.vscode-server-insiders/bin"
-    "$HOME/.cursor-server/bin"  # Added Cursor support
+  local roots=(
+    "/home/daml/.vscode-server/bin" "/home/daml/.vscode-server-insiders/bin" "/home/daml/.cursor-server/bin"
+    "$HOME/.vscode-server/bin" "$HOME/.vscode-server-insiders/bin" "$HOME/.cursor-server/bin"
   )
-  for base in "${candidates[@]}"; do
-    if [[ -d "$base" ]]; then
-      local first
-      first=$(ls -d "$base"/* 2>/dev/null | head -n1 || true)
-      if [[ -n "$first" ]]; then
-        # Check for VS Code server
-        if [[ -x "$first/bin/code-server" ]]; then
-          echo "$first/bin/code-server"
-          return 0
-        fi
-        # Check for Cursor server (different structure)
-        if [[ -x "$first/bin/cursor-server" ]]; then
-          echo "$first/bin/cursor-server"
-          return 0
-        fi
-        # Fallback to newer remote CLI form
-        if [[ -f "$first/bin/remote-cli/cli.js" && -x "$first/node" ]]; then
-          echo "$first/bin/remote-cli/cli.js|$first/node"
-          return 0
-        fi
-      fi
+  for base in "${roots[@]}"; do
+    [[ -d "$base" ]] || continue
+    local first
+    first=$(ls -d "$base"/* 2>/dev/null | head -n1 || true)
+    [[ -n "$first" ]] || continue
+    if [[ -x "$first/bin/code-server" ]]; then
+      CODE_SERVER_BIN="$first/bin/code-server"
+      return 0
+    fi
+    if [[ -x "$first/bin/cursor-server" ]]; then
+      CODE_SERVER_BIN="$first/bin/cursor-server"
+      return 0
+    fi
+    if [[ -f "$first/bin/remote-cli/cli.js" && -x "$first/node" ]]; then
+      REMOTE_CLI_JS="$first/bin/remote-cli/cli.js"
+      REMOTE_NODE="$first/node"
+      return 0
     fi
   done
   return 1
 }
 
+install_via_cli() {
+  if [[ -n "${CODE_SERVER_BIN:-}" ]]; then
+    log "Installing via ${CODE_SERVER_BIN}"
+    "${CODE_SERVER_BIN}" --install-extension "$VSIX_PATH" --force >/dev/null 2>&1 || log "CLI install returned non-zero (non-fatal)"
+    "${CODE_SERVER_BIN}" --list-extensions 2>/dev/null | grep -Eiq 'daml' && log "Extension present"
+    return 0
+  fi
+  if [[ -n "${REMOTE_CLI_JS:-}" && -n "${REMOTE_NODE:-}" ]]; then
+    log "Installing via remote CLI"
+    "${REMOTE_NODE}" "${REMOTE_CLI_JS}" --install-extension "$VSIX_PATH" --force >/dev/null 2>&1 || log "Remote CLI install returned non-zero (non-fatal)"
+    "${REMOTE_NODE}" "${REMOTE_CLI_JS}" --list-extensions 2>/dev/null | grep -Eiq 'daml' && log "Extension present"
+    return 0
+  fi
+  return 1
+}
+
+manual_unpack() {
+  command -v unzip >/dev/null 2>&1 || return 1
+  command -v node >/dev/null 2>&1 || return 1
+  local tmp
+  tmp=$(mktemp -d -t daml-vsix.XXXXXX)
+  trap "rm -rf '$tmp'" EXIT
+  unzip -q "$VSIX_PATH" -d "$tmp" || return 1
+  local id
+  id=$(node -e 'const fs=require("fs");const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(`${j.publisher}.${j.name}-${j.version}`);' "$tmp/extension/package.json" 2>/dev/null || true)
+  [[ -n "$id" ]] || return 1
+  for ext_dir in "$HOME/.vscode-server/extensions" "$HOME/.vscode-server-insiders/extensions" "$HOME/.cursor-server/extensions"; do
+    mkdir -p "$ext_dir/$id"
+    cp -a "$tmp/extension/." "$ext_dir/$id/" 2>/dev/null && log "Unpacked extension to $ext_dir/$id"
+  done
+  return 0
+}
+
+log "Starting DAML VSIX setup (SDK $DAML_SDK_VERSION)"
+VSIX_PATH=""
+find_vsix
+
+if [[ -z "$VSIX_PATH" ]]; then
+  log "VSIX not found in dpm cache or legacy paths"
+  log "Will rely on 'dpm studio' / manual install"
+  exit 0
+fi
+
 CODE_SERVER_BIN=""
 REMOTE_CLI_JS=""
 REMOTE_NODE=""
-
-# Wait a bit for VS Code server to appear on first attach
-for i in $(seq 1 ${DAML_VSIX_WAIT_SECS:-30}); do
-  found=$(find_code_server || true)
-  if [[ -n "$found" ]]; then
-    if [[ "$found" == *"|"* ]]; then
-      REMOTE_CLI_JS="${found%|*}"
-      REMOTE_NODE="${found#*|}"
-    else
-      CODE_SERVER_BIN="$found"
-    fi
-    break
-  fi
-  if [[ $i -eq 1 ]]; then
-    echo "[daml-vsix] Waiting for VS Code server to initialize..."
-  fi
-  sleep 1
+for _ in $(seq 1 "${DAML_VSIX_WAIT_SECS:-30}"); do
+  find_code_server && break
+  [[ -n "${CODE_SERVER_BIN}${REMOTE_CLI_JS}" ]] || sleep 1
 done
 
-# Force replace during installation
-if [[ -x "${CODE_SERVER_BIN:-}" ]]; then
-  echo "[daml-vsix] Found VS Code server CLI: ${CODE_SERVER_BIN}"
-  if "${CODE_SERVER_BIN}" --install-extension "${VSIX_PATH}" --force >/dev/null 2>&1; then
-    echo "[daml-vsix] Installed DAML VSIX with force (or it was already installed)."
-  else
-    echo "[daml-vsix] Extension install command returned non-zero (non-fatal)."
-  fi
-  if "${CODE_SERVER_BIN}" --list-extensions 2>/dev/null | grep -Eiq 'daml'; then
-    echo "[daml-vsix] Verification: DAML extension is present."
-  else
-    echo "[daml-vsix] Verification: Could not confirm DAML extension via list."
-  fi
-elif [[ -f "${REMOTE_CLI_JS:-}" && -x "${REMOTE_NODE:-}" ]]; then
-  echo "[daml-vsix] Found VS Code remote CLI: ${REMOTE_CLI_JS} (node: ${REMOTE_NODE})"
-  if "${REMOTE_NODE}" "${REMOTE_CLI_JS}" --install-extension "${VSIX_PATH}" --force >/dev/null 2>&1; then
-    echo "[daml-vsix] Installed DAML VSIX via remote CLI with force (or it was already installed)."
-  else
-    echo "[daml-vsix] Remote CLI install returned non-zero (non-fatal)."
-  fi
-  if "${REMOTE_NODE}" "${REMOTE_CLI_JS}" --list-extensions 2>/dev/null | grep -Eiq 'daml'; then
-    echo "[daml-vsix] Verification: DAML extension is present."
-  else
-    echo "[daml-vsix] Verification: Could not confirm DAML extension via list."
-  fi
+if install_via_cli; then
+  log "VSIX installed via CLI"
+elif manual_unpack; then
+  log "VSIX installed via manual unpack"
 else
-  echo "[daml-vsix] Code server not detected after wait. Attempting direct install by unpacking VSIX."
-  if command -v unzip >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then
-    tmp=$(mktemp -d)
-    if unzip -q "$VSIX_PATH" -d "$tmp"; then
-      id=$(node -e 'const fs=require("fs");const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(`${j.publisher}.${j.name}-${j.version}`);' "$tmp/extension/package.json" 2>/dev/null || true)
-      if [[ -n "$id" ]]; then
-        # Install to both VS Code and Cursor extension directories
-        for ext_dir in "$HOME/.vscode-server/extensions" "$HOME/.vscode-server-insiders/extensions" "$HOME/.cursor-server/extensions"; do
-          if [[ -d "$(dirname "$ext_dir")" ]]; then
-            mkdir -p "$ext_dir/$id"
-            cp -a "$tmp/extension/." "$ext_dir/$id/"
-            echo "[daml-vsix] Unpacked extension to $ext_dir/$id"
-          fi
-        done
-        echo "[daml-vsix] ✓ Successfully installed DAML extension via manual unpack"
-      else
-        echo "[daml-vsix] WARNING: Could not parse extension id from package.json"
-        echo "[daml-vsix] Extension may need manual installation"
-      fi
-    else
-      echo "[daml-vsix] WARNING: unzip failed; cannot unpack VSIX."
-      echo "[daml-vsix] Extension may need manual installation"
-    fi
-    rm -rf "$tmp"
-  else
-    echo "[daml-vsix] WARNING: unzip/node not available; cannot unpack VSIX."
-    echo "[daml-vsix] Extension may need manual installation"
-  fi
+  log "WARNING: Could not install VSIX automatically"
+  log "You can install manually from: $VSIX_PATH"
 fi
 
-# Enhanced final verification
-echo "[daml-vsix] Enhanced final checks..."
+log "Installed extensions overview:"
 for dir in "$HOME/.vscode-server/extensions" "$HOME/.cursor-server/extensions"; do
-  if [[ -d "$dir" ]]; then
-    echo "[daml-vsix] Extensions in $dir:"
-    ls "$dir" | grep -i daml || echo "  No DAML extension found - installation may have failed!"
-  fi
-done
+  [[ -d "$dir" ]] || continue
+  log "  $dir"
+  ls "$dir" | grep -i daml || log "  (no DAML extension detected)"
+fi
 
-echo "[daml-vsix] Setup completed"
-echo "[daml-vsix] Note: If extension is not loaded, you can manually install from: /home/daml/daml-bundled.vsix"
+log "Setup completed"
 exit 0
 
 
