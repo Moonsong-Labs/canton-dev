@@ -1,0 +1,20 @@
+{
+  "name": "canton-devenv-start",
+  "version": "0.1.0",
+  "description": "Scaffold a Canton DAML dev container workspace with one command",
+  "license": "MIT",
+  "bin": {
+    "canton-devenv-start": "bin/index.js"
+  },
+  "keywords": [
+    "daml",
+    "canton",
+    "devcontainer",
+    "scaffold",
+    "cli"
+  ],
+  "author": "Canton Dev Team",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

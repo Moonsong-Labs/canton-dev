@@ -1,0 +1,30 @@
+.cursor/rules/kluster-code-verify.mdc
+.kluster
+
+# Daml build artifacts
+.daml/
+*.dar
+
+# Node
+node_modules/
+npm-debug.log*
+package-lock.json
+
+# Docker
+.docker/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+
+# Log files
+*.log
+/log
