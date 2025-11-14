@@ -5,13 +5,14 @@ const path = require('path');
 const TEMPLATE_ROOT = path.join(__dirname, '..', 'templates');
 
 function printHelp() {
-  console.log(`canton-devenv-start\n\nUsage:\n  npx canton-devenv-start [options]\n\nOptions:\n  --dir, --path <path>   Output directory (defaults to CWD)\n  --force, -f            Overwrite existing files\n  --help, -h             Show this help text\n`);
+  console.log(`canton-devenv-start\n\nUsage:\n  npx canton-devenv-start [options]\n\nOptions:\n  --dir, --path <path>   Output directory (defaults to CWD)\n  --force, -f            Overwrite existing files\n  --with-examples        Include example projects\n  --help, -h             Show this help text\n`);
 }
 
 function parseArgs(argv) {
   const opts = {
     targetDir: process.cwd(),
     force: false,
+    withExamples: false,
   };
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -26,6 +27,8 @@ function parseArgs(argv) {
       i += 1;
     } else if (arg === '--force' || arg === '-f') {
       opts.force = true;
+    } else if (arg === '--with-examples') {
+      opts.withExamples = true;
     } else if (arg === '--help' || arg === '-h') {
       printHelp();
       process.exit(0);
@@ -95,6 +98,10 @@ function main() {
   const results = { copied: [], skipped: [] };
   const entries = fs.readdirSync(TEMPLATE_ROOT, { withFileTypes: true });
   entries.forEach((entry) => {
+    // Skip examples directory unless --with-examples flag is set
+    if (entry.name === 'examples' && !opts.withExamples) {
+      return;
+    }
     copyEntry(
       path.join(TEMPLATE_ROOT, entry.name),
       path.join(opts.targetDir, entry.name),
@@ -123,6 +130,10 @@ function main() {
   console.log('  1. Open the folder in VS Code or Cursor');
   console.log('  2. Reopen in the devcontainer when prompted');
   console.log('  3. Run "daml build" at the repo root to warm up the LSP');
+
+  if (!opts.withExamples) {
+    console.log('\n💡 Tip: Use --with-examples to include example projects');
+  }
 }
 
 main();

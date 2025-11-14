@@ -11,12 +11,18 @@ npx canton-devenv-start [options]
 ### Options
 - `--dir <path>`: Where to scaffold the workspace (defaults to current directory)
 - `--force`: Overwrite existing files (otherwise the CLI skips files that already exist)
+- `--with-examples`: Include example projects (invoice workflow demo)
 
 ## What Gets Created
+
+### Always included:
 - `.devcontainer/` with Dockerfile, devcontainer.json, and a VSIX install hook
 - Root `daml.yaml` plus `daml/Examples.daml` with the no-op script and imports
-- `examples/invoice-workflow` sample demonstrating token + invoice workflow
 - `verify-setup.sh` health-check script and the project `README.md`
+- `.gitignore` configured for DAML/Canton development
+
+### With `--with-examples` flag:
+- `examples/invoice-workflow` sample demonstrating token + invoice workflow
 
 After running the CLI:
 1. Open the folder in VS Code or Cursor

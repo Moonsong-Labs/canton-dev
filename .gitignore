@@ -29,3 +29,6 @@ examples/
 coverage/
 .nyc_output/
 /tmp/
+
+.cursor/rules/kluster-code-verify.mdc
+.kluster
