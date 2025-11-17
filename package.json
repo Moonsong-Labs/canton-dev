@@ -1,0 +1,13 @@
+{
+  "name": "canton-dev",
+  "version": "1.0.0",
+  "description": "Canton Development Tools",
+  "bin": {
+    "devenv-init": "./packages/canton-devenv-start/bin/index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Moonsong-Labs/canton-dev.git"
+  },
+  "private": true
+}
