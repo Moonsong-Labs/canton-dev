@@ -1,41 +1,25 @@
 # devenv-init
 
-`devenv-init` bootstraps a ready-to-use Canton + DAML development environment. It sets up a VS Code devcontainer with the DAML SDK, installs the VSIX automatically, seeds a sample invoice workflow project, and wires the repo root so the DAML language server works on first open.
+Spin up a Canton + DAML workspace with a VS Code devcontainer and bundled DAML SDK in one command.
 
 ## Requirements
-- [Bun](https://bun.sh) (the CLI is executed via `bunx`)
+- [Bun](https://bun.sh) (run via `bunx`)
 
 ## Usage
-
 ```bash
 bunx devenv-init [options]
 ```
+- `--dir <path>` target folder (defaults to cwd)
+- `--force` overwrite existing files
 
-### Options
-- `--dir <path>`: Where to scaffold the workspace (defaults to current directory)
-- `--force`: Overwrite existing files (otherwise the CLI skips files that already exist)
+## Output
+- `.devcontainer/` with Dockerfile, devcontainer.json, `install-daml-vsix.sh`
+- `.gitignore` tuned for DAML artifacts
+- Empty workspace ready for `dpm new .`
 
-## What Gets Created
+Open the folder in VS Code/Cursor, “Reopen in Container,” and run `dpm build` once to warm the language server.
 
-### Always included:
-- `.devcontainer/` with a Dockerfile, devcontainer.json, and the `install-daml-vsix.sh` hook that installs the DAML extension on container attach
-- `.gitignore` preconfigured for Canton/DAML development artifacts (`.daml/`, `.vscode/`, build outputs, etc.)
-
-### Bring-your-own DAML sources
-This starter intentionally **does not** scaffold a sample `daml.yaml` or `daml/` tree. After running the CLI you can:
-- run `dpm new .` (or `daml new .` if you prefer the legacy assistant) to create a fresh project, or
-- copy an existing Canton/DAML workspace into the generated folder.
-
-After running the CLI:
-- In VS Code or Cursor, open the folder and choose “Reopen in Container / Dev Container” when prompted.
-- Wait for the automatic DAML extension installation (the devcontainer’s `postAttachCommand` runs `install-daml-vsix.sh`).
-- Initialize or copy your DAML sources, then run `dpm build` (or `daml build`) at the repo root to warm up the language server.
-
-## Local Development
-Inside this monorepo you can test the CLI without publishing by running:
-
-```bash
-bun run packages/canton-devenv-start/bin/index.js --dir /tmp/test-canton-env --force
-```
-
-Then inspect `/tmp/test-canton-env` or open it in VS Code to verify the experience.
+## Local development
+1. From repo root: `bunx --bun link` (aka `bun link`).
+2. In any test workspace: `bun link canton-devenv-start`.
+3. Run the CLI there: `bunx devenv-init --dir /tmp/test-canton-env --force`.
