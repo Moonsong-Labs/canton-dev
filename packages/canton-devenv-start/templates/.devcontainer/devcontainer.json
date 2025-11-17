@@ -18,7 +18,7 @@
   "remoteEnv": {
     "PATH": "${containerEnv:PATH}:/home/daml/.daml/bin"
   },
-  "postCreateCommand": "daml --version && echo 'DAML SDK installed successfully' || echo 'Warning: DAML not found'",
+  "postCreateCommand": "dpm --version && echo 'DAML SDK installed successfully' || echo 'Warning: DAML not found'",
   "postAttachCommand": "/workspaces/${localWorkspaceFolderBasename}/.devcontainer/install-daml-vsix.sh",
   "customizations": {
     "vscode": {

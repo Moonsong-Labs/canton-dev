@@ -27,10 +27,9 @@ This starter intentionally **does not** scaffold a sample `daml.yaml` or `daml/`
 - copy an existing Canton/DAML workspace into the generated folder.
 
 After running the CLI:
-1. Open the folder in VS Code or Cursor.
-2. Reopen in the devcontainer when prompted.
-3. Wait for the automatic VSIX install (`install-daml-vsix.sh` runs via `postAttachCommand`).
-4. Initialize or copy your DAML sources, then run `dpm build` (or `daml build`) at the repo root to warm up the language server.
+- In VS Code or Cursor, open the folder and choose “Reopen in Container / Dev Container” when prompted.
+- Wait for the automatic DAML extension installation (the devcontainer’s `postAttachCommand` runs `install-daml-vsix.sh`).
+- Initialize or copy your DAML sources, then run `dpm build` (or `daml build`) at the repo root to warm up the language server.
 
 ## Local Development
 Inside this monorepo you can test the CLI without publishing by running:
