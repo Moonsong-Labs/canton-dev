@@ -1,0 +1,46 @@
+{
+  "name": "Canton DAML Dev",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "remoteUser": "daml",
+  "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+  "runArgs": [
+    "--init"
+  ],
+  "mounts": [
+    "source=vscode-server-extensions,target=/home/daml/.vscode-server/extensions,type=volume"
+  ],
+  "containerEnv": {
+    "DAML_SDK_VERSION": "3.4.7"
+  },
+  "remoteEnv": {
+    "PATH": "${containerEnv:PATH}:/home/daml/.daml/bin"
+  },
+  "postCreateCommand": "dpm --version && echo 'DAML SDK installed successfully' || echo 'Warning: DAML not found'",
+  "postAttachCommand": "/workspaces/${localWorkspaceFolderBasename}/.devcontainer/install-daml-vsix.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode-remote.remote-containers",
+        "mkhl.direnv"
+      ],
+      "settings": {
+        "editor.formatOnSave": true,
+        "terminal.integrated.defaultProfile.osx": "bash",
+        "editor.codeLens": true,
+        "daml-language-server.trace.server": "verbose"
+      }
+    }
+  },
+  "forwardPorts": [
+    5011,
+    5012,
+    5021,
+    5022,
+    5018,
+    5019,
+    7500
+  ]
+}

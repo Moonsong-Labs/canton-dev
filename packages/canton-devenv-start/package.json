@@ -1,0 +1,34 @@
+{
+  "name": "canton-devenv-start",
+  "version": "0.1.0",
+  "description": "Scaffold a Canton DAML dev container workspace with one command",
+  "license": "MIT",
+  "bin": {
+    "devenv-init": "bin/index.js"
+  },
+  "files": [
+    "bin/",
+    "templates/",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/canton-dev/canton-dev.git",
+    "directory": "packages/canton-devenv-start"
+  },
+  "homepage": "https://github.com/canton-dev/canton-dev/tree/main/packages/canton-devenv-start",
+  "bugs": {
+    "url": "https://github.com/canton-dev/canton-dev/issues"
+  },
+  "keywords": [
+    "daml",
+    "canton",
+    "devcontainer",
+    "scaffold",
+    "cli"
+  ],
+  "author": "Canton Dev Team",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
