@@ -108,16 +108,22 @@ function copyEntry(src, dest, opts, results) {
 
   try {
     fs.copyFileSync(src, dest);
-    // Only copy file permissions if not on Windows
+    // Only set file permissions if not on Windows
     // Windows doesn't support Unix-style permissions
     if (process.platform !== 'win32') {
-      // Sanitize permissions: remove execute bit unless source is explicitly executable
-      const sanitizedMode = stats.mode & 0o666; // Only keep read/write permissions
-      if (stats.mode & 0o111) { // If any execute bit is set in source
-        // Only preserve execute for owner, not group/others
-        fs.chmodSync(dest, sanitizedMode | 0o100);
-      } else {
+      // Check if this is a shell script by extension
+      const isShellScript = /\.(sh|bash)$/i.test(src);
+      
+      if (isShellScript) {
+        // Shell scripts should always be executable (owner execute + read/write)
+        fs.chmodSync(dest, 0o755);
+      } else if (stats.mode & 0o111) {
+        // If source has any execute bit, preserve owner execute only
+        const sanitizedMode = (stats.mode & 0o666) | 0o100;
         fs.chmodSync(dest, sanitizedMode);
+      } else {
+        // Regular files: read/write only
+        fs.chmodSync(dest, stats.mode & 0o666);
       }
     }
     results.copied.push(dest);
