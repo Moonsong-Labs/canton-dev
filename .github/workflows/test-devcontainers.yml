@@ -1,0 +1,25 @@
+name: Test DevContainers
+
+on: [push, pull_request, workflow_dispatch]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        variant: [stable, latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract SDK version
+        id: sdk
+        run: |
+          VERSION=$(jq -r '.build.args.DAML_SDK_VERSION' \
+            packages/canton-devenv-start/templates/.devcontainer/${{ matrix.variant }}/devcontainer.json)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+      - name: Build ${{ matrix.variant }}
+        run: |
+          docker build \
+            --build-arg DAML_SDK_VERSION=${{ steps.sdk.outputs.version }} \
+            -f packages/canton-devenv-start/templates/.devcontainer/Dockerfile \
+            packages/canton-devenv-start/templates/.devcontainer
