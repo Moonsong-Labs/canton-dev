@@ -1,8 +1,11 @@
 {
-  "name": "Canton DAML Dev",
+  "name": "Canton DAML Dev (latest)",
   "build": {
-    "dockerfile": "Dockerfile",
-    "context": ".."
+    "dockerfile": "../Dockerfile",
+    "context": "../..",
+    "args": {
+      "DAML_SDK_VERSION": "3.4.8"
+    }
   },
   "remoteUser": "daml",
   "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
@@ -13,12 +16,11 @@
     "source=vscode-server-extensions,target=/home/daml/.vscode-server/extensions,type=volume"
   ],
   "containerEnv": {
-    "DAML_SDK_VERSION": "3.4.7"
+    "DPM_HOME": "/home/daml/.dpm"
   },
   "remoteEnv": {
-    "PATH": "${containerEnv:PATH}:/home/daml/.daml/bin"
+    "PATH": "${containerEnv:PATH}:/home/daml/.dpm/bin:/home/daml/.daml/bin"
   },
-  "postCreateCommand": "dpm --version && echo 'DAML SDK installed successfully' || echo 'Warning: DAML not found'",
   "postAttachCommand": "/workspaces/${localWorkspaceFolderBasename}/.devcontainer/install-daml-vsix.sh",
   "customizations": {
     "vscode": {

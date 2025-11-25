@@ -1,5 +1,16 @@
 FROM eclipse-temurin:17-jdk
 
+# Build argument for SDK version - MUST be set by devcontainer.json
+ARG DAML_SDK_VERSION
+
+# Validate that DAML_SDK_VERSION is provided
+RUN if [ -z "$DAML_SDK_VERSION" ]; then \
+      echo "ERROR: DAML_SDK_VERSION build argument is required" && exit 1; \
+    fi
+
+# Persist DAML_SDK_VERSION as ENV for runtime use
+ENV DAML_SDK_VERSION=${DAML_SDK_VERSION}
+
 ENV DEBIAN_FRONTEND=noninteractive \
     TERM=dumb \
     NODE_VERSION=18
@@ -30,9 +41,12 @@ RUN useradd -m -u 1001 -s /bin/bash daml || true && \
 USER daml
 WORKDIR /home/daml
 
-# Install DAML SDK via dpm
-ENV DPM_HOME=/home/daml/.dpm
-ENV PATH="${DPM_HOME}/bin:/home/daml/.daml/bin:${PATH}"
-RUN curl -sSL https://get.digitalasset.com/install/install.sh | sh
+# Install DAML SDK from GitHub releases
+RUN echo "Installing DAML SDK version ${DAML_SDK_VERSION} from GitHub..." && \
+    curl -sSL "https://github.com/digital-asset/daml/releases/download/v${DAML_SDK_VERSION}/daml-sdk-${DAML_SDK_VERSION}-linux.tar.gz" -o daml-sdk.tar.gz && \
+    mkdir -p /home/daml/.daml/sdk/${DAML_SDK_VERSION} && \
+    tar -xzf daml-sdk.tar.gz -C /home/daml/.daml/sdk/${DAML_SDK_VERSION} --strip-components=1 && \
+    rm daml-sdk.tar.gz && \
+    /home/daml/.daml/sdk/${DAML_SDK_VERSION}/daml/daml install /home/daml/.daml/sdk/${DAML_SDK_VERSION} --install-with-custom-version=${DAML_SDK_VERSION}
 
 WORKDIR /workspaces

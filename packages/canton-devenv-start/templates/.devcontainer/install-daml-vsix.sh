@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DAML_SDK_VERSION="${DAML_SDK_VERSION:-3.4.7}"
+# DAML_SDK_VERSION is set by the Dockerfile as an ENV variable
+if [[ -z "${DAML_SDK_VERSION:-}" ]]; then
+  echo "[daml-vsix] Error: DAML_SDK_VERSION environment variable not set"
+  exit 1
+fi
 
 find_vsix() {
   local cache_path
@@ -30,8 +34,10 @@ find_code_server() {
   )
   for base in "${roots[@]}"; do
     [[ -d "$base" ]] || continue
-    local first
-    first=$(ls -d "$base"/* 2>/dev/null | head -n1 || true)
+    local first=""
+    for entry in "$base"/*; do
+      [[ -e "$entry" ]] && first="$entry" && break
+    done
     [[ -n "$first" ]] || continue
     if [[ -x "$first/bin/code-server" ]]; then
       CODE_SERVER_BIN="$first/bin/code-server"
