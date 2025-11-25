@@ -13,11 +13,16 @@ bunx devenv-init [options]
 - `--force` overwrite existing files
 
 ## Output
-- `.devcontainer/` with Dockerfile, devcontainer.json, `install-daml-vsix.sh`
+- `.devcontainer/` with:
+  - `Dockerfile` (shared)
+  - `latest/devcontainer.json` (SDK 3.x)
+  - `stable/devcontainer.json` (SDK 2.x)
+  - `install-daml-vsix.sh`
 - `.gitignore` tuned for DAML artifacts
-- Empty workspace ready for `dpm new .`
 
-Open the folder in VS Code/Cursor, “Reopen in Container,” and run `dpm build` once to warm the language server.
+## Getting Started
+1. Open folder in VS Code/Cursor
+2. "Reopen in Container" → choose **latest** or **stable**
 
 ## Local development
 1. From repo root: `bunx --bun link` (aka `bun link`).
