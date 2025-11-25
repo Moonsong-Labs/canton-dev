@@ -34,8 +34,10 @@ find_code_server() {
   )
   for base in "${roots[@]}"; do
     [[ -d "$base" ]] || continue
-    local first
-    first=$(ls -d "$base"/* 2>/dev/null | head -n1 || true)
+    local first=""
+    for entry in "$base"/*; do
+      [[ -e "$entry" ]] && first="$entry" && break
+    done
     [[ -n "$first" ]] || continue
     if [[ -x "$first/bin/code-server" ]]; then
       CODE_SERVER_BIN="$first/bin/code-server"

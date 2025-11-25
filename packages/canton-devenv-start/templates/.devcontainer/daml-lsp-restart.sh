@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 
 echo "Stopping any running DAML LSP processes..."
 pkill -f "damlc (multi-ide|ide)" >/dev/null 2>&1 || true

@@ -27,8 +27,19 @@ function parseArgs(argv) {
 
       // Security: Prevent path traversal attacks
       // Allow absolute paths but validate they're not system directories
-      const forbiddenPaths = ['/etc', '/usr', '/bin', '/sbin', '/var', '/sys', '/proc'];
-      const isSystemPath = forbiddenPaths.some(fp => normalizedPath === fp || normalizedPath.startsWith(fp + '/'));
+      const forbiddenPaths = [
+        '/etc', '/usr', '/bin', '/sbin', '/var', '/sys', '/proc',
+        '/root', '/boot', '/lib', '/lib64', '/opt',
+        'C:\\Windows', 'C:\\Program Files', 'C:\\Program Files (x86)',
+        'C:\\ProgramData', 'C:\\System32'
+      ];
+      const isSystemPath = forbiddenPaths.some(fp => {
+        const normalizedFp = path.normalize(fp);
+        return normalizedPath === normalizedFp ||
+               normalizedPath.startsWith(normalizedFp + path.sep) ||
+               normalizedPath.toLowerCase() === normalizedFp.toLowerCase() ||
+               normalizedPath.toLowerCase().startsWith(normalizedFp.toLowerCase() + path.sep);
+      });
 
       if (isSystemPath) {
         console.error(`Error: Cannot write to system directory: ${normalizedPath}`);
