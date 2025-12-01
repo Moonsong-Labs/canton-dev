@@ -46,6 +46,25 @@ interface ParsedModule {
   workflowType?: 'Request' | 'Proposal';
 }
 
+interface FactoryTemplate {
+  /** Factory name (e.g., "Account", "Holding", "Token") */
+  name: string;
+  /** Domain category (e.g., "Account", "Holding", "Instrument") */
+  domain: string;
+  /** Template ID for the implementation factory */
+  templateId: string;
+  /** Interface ID for exercising choices */
+  interfaceId: string;
+  /** Fields for creating the factory */
+  fields: Array<{ name: string; type: string }>;
+  /** Choices available on the factory interface (e.g., Create) */
+  interfaceChoices: Array<{ name: string; args: Array<{ name: string; type: string }>; result: string }>;
+  /** Reference template ID if applicable */
+  referenceTemplateId?: string;
+  /** Reference fields if applicable */
+  referenceFields?: Array<{ name: string; type: string }>;
+}
+
 // === PRIMITIVES (Static - never change) ===
 
 const PRIMITIVES = `// core/primitives.ts
@@ -156,6 +175,16 @@ export interface ExerciseResult<T> {
   exerciseResult: T;
   events: unknown[];
 }
+
+/**
+ * Ledger connection interface for type-safe ledger operations.
+ */
+export interface LedgerConnection {
+  query<T>(templateId: string, filter?: Partial<T>): Promise<Contract<T>[]>;
+  create<T>(templateId: string, payload: T): Promise<ContractId<T>>;
+  exercise<T, R>(contractId: ContractId<T>, choice: string, args: unknown): Promise<ExerciseResult<R>>;
+  fetch<T>(contractId: ContractId<T>): Promise<Contract<T> | null>;
+}
 `;
 
 // === GENERATOR CLASS ===
@@ -168,6 +197,9 @@ class CantonApiGenerator {
   private modules: ParsedModule[] = [];
   private interfaces = new Map<string, string>();
   private workflowTemplates: WorkflowTemplate[] = [];
+  private factories: FactoryTemplate[] = [];
+  private interfaceChoicesMap = new Map<string, Array<{ name: string; args: Array<{ name: string; type: string }>; result: string }>>();
+  private referenceTemplates = new Map<string, { templateId: string; fields: Array<{ name: string; type: string }> }>();
 
   constructor(damlJsDir: string, outputDir: string, projectName: string) {
     this.damlJsDir = damlJsDir;
@@ -189,14 +221,27 @@ class CantonApiGenerator {
     this.generateCoreInterfaces();
     this.generateCoreIndex();
 
-    // 3. Generate project API
+    // 3. Generate ledger connection files
+    this.generateLedgerConfig();
+    this.generateLedgerClient();
+    this.generateLedgerIndex();
+
+    // 4. Generate environment config files
+    this.generateEnvFiles();
+
+    // 5. Generate project API
     this.generateProjectApi();
 
     console.log(`\n✅ Generation complete!`);
     console.log(`   Files created:`);
+    console.log(`   - .env.example (configuration template)`);
+    console.log(`   - .env (copy of example)`);
     console.log(`   - core/primitives.ts`);
     console.log(`   - core/interfaces.ts`);
     console.log(`   - core/index.ts`);
+    console.log(`   - ledger/config.ts (auto-loads .env)`);
+    console.log(`   - ledger/client.ts (Canton JSON API client)`);
+    console.log(`   - ledger/index.ts`);
     console.log(`   - ${this.projectName}-api.ts\n`);
   }
 
@@ -208,12 +253,17 @@ class CantonApiGenerator {
 
     console.log(`📂 Scanning ${packages.length} packages...`);
 
+    // First pass: scan all modules to collect templates, interfaces, and choices
     for (const pkg of packages) {
       this.scanPackage(pkg);
     }
 
+    // Second pass: build factory templates by matching implementations with interfaces
+    this.buildFactoryTemplates();
+
     console.log(`   Found ${this.modules.length} templates`);
     console.log(`   Found ${this.workflowTemplates.length} workflow templates`);
+    console.log(`   Found ${this.factories.length} factories`);
     console.log(`   Found ${this.interfaces.size} interfaces`);
   }
 
@@ -248,6 +298,10 @@ class CantonApiGenerator {
 
     // Check if this is a workflow
     const isWorkflow = modulePath.includes('Workflow');
+    // Check if this is an interface module (for interface choices)
+    const isInterface = modulePath.includes('Interface');
+    // Check if this is a factory module
+    const isFactoryModule = modulePath.endsWith('.Factory') || modulePath.includes('.Factory.');
 
     // Parse type declarations
     ts.forEachChild(sourceFile, (node) => {
@@ -255,8 +309,14 @@ class CantonApiGenerator {
         this.parseTypeAlias(node, modulePath, pkgName, isWorkflow);
       } else if (ts.isInterfaceDeclaration(node)) {
         this.parseInterface(node, modulePath, pkgName, isWorkflow);
+        // Also check for interface choices (like Create on Factory interfaces)
+        if (isInterface && isFactoryModule) {
+          this.parseInterfaceChoices(node, modulePath, pkgName, content);
+        }
       } else if (ts.isVariableStatement(node)) {
         this.parseTemplateVariable(node, modulePath, pkgName, content, isWorkflow);
+        // Also check for Reference templates
+        this.parseReferenceTemplate(node, modulePath, pkgName, content);
       }
     });
   }
@@ -393,6 +453,169 @@ class CantonApiGenerator {
     return choices;
   }
 
+  private parseInterfaceChoices(node: ts.InterfaceDeclaration, modulePath: string, pkgName: string, content: string): void {
+    const name = node.name.text;
+
+    // Only process FactoryInterface declarations (not ReferenceInterface)
+    if (name !== 'FactoryInterface') return;
+
+    // Extract the interface ID from the companion declaration
+    // Look for: InterfaceCompanion<Factory, undefined, 'hash:Module.Path:Factory'>
+    const interfaceIdMatch = content.match(/InterfaceCompanion<Factory,[^,]+,\s*'([^']+)'/);
+    if (!interfaceIdMatch) return;
+
+    const interfaceId = interfaceIdMatch[1];
+    const choices: Array<{ name: string; args: Array<{ name: string; type: string }>; result: string }> = [];
+
+    // Parse the interface members for Choice declarations
+    for (const member of node.members) {
+      if (ts.isPropertySignature(member) && member.name) {
+        const choiceName = member.name.getText();
+        if (choiceName === 'Archive') continue;
+
+        const typeText = member.type ? member.type.getText() : '';
+        // Match: damlTypes.Choice<Factory, ArgsType, ResultType, ...>
+        const choiceMatch = typeText.match(/Choice<[^,]+,\s*([^,]+),\s*([^,>]+)/);
+        if (choiceMatch) {
+          const argsTypeName = this.simplifyType(choiceMatch[1].trim());
+          const resultType = this.simplifyComplexResult(choiceMatch[2].trim());
+
+          // Extract the args type fields from the content
+          const argsFields = this.extractChoiceArgsFields(content, argsTypeName);
+
+          choices.push({
+            name: choiceName,
+            args: argsFields,
+            result: resultType
+          });
+        }
+      }
+    }
+
+    if (choices.length > 0) {
+      this.interfaceChoicesMap.set(interfaceId, choices);
+    }
+  }
+
+  private extractChoiceArgsFields(content: string, argsTypeName: string): Array<{ name: string; type: string }> {
+    const fields: Array<{ name: string; type: string }> = [];
+
+    // Match type declaration: export declare type ArgsType = { field: Type; ... }
+    const typeRegex = new RegExp(`export declare type ${argsTypeName} = \\{([^}]+)\\}`, 's');
+    const match = content.match(typeRegex);
+
+    if (match) {
+      const fieldsStr = match[1];
+      const fieldRegex = /(\w+):\s*([^;]+);/g;
+      let fieldMatch;
+
+      while ((fieldMatch = fieldRegex.exec(fieldsStr)) !== null) {
+        fields.push({
+          name: fieldMatch[1],
+          type: this.simplifyType(fieldMatch[2].trim())
+        });
+      }
+    }
+
+    return fields;
+  }
+
+  private parseReferenceTemplate(node: ts.VariableStatement, modulePath: string, pkgName: string, content: string): void {
+    for (const decl of node.declarationList.declarations) {
+      if (!ts.isIdentifier(decl.name)) continue;
+
+      const name = decl.name.text;
+      if (name !== 'Reference') continue;
+
+      const typeText = decl.type ? decl.type.getText() : '';
+
+      // Check if this is a template: Template<Reference, ..., '#templateId'>
+      const templateMatch = typeText.match(/Template<Reference,[^,]*,\s*'#([^']+)'/);
+      if (!templateMatch) continue;
+
+      const templateId = templateMatch[1];
+      const fields = this.extractTemplateFields(content, 'Reference');
+
+      // Store with the factory domain as key (e.g., "Holding.Factory" -> Holding)
+      const domain = this.extractFactoryDomain(modulePath);
+      this.referenceTemplates.set(domain, { templateId, fields });
+    }
+  }
+
+  private extractFactoryDomain(modulePath: string): string {
+    // Extract domain from module path like "Daml.Finance.Interface.Holding.V4.Factory"
+    const parts = modulePath.split('.');
+    const factoryIndex = parts.findIndex(p => p === 'Factory');
+    if (factoryIndex > 0) {
+      return parts[factoryIndex - 1]; // e.g., "Holding", "Account", "Instrument"
+    }
+    // Try to find domain before version marker
+    const versionIndex = parts.findIndex(p => /^V\d+$/.test(p));
+    if (versionIndex > 0) {
+      return parts[versionIndex - 1];
+    }
+    return parts[parts.length - 2] || 'Unknown';
+  }
+
+  private buildFactoryTemplates(): void {
+    // Find all factory implementation templates (name === 'Factory')
+    const factoryModules = this.modules.filter(m => m.name === 'Factory' && !m.isWorkflow);
+
+    for (const factory of factoryModules) {
+      const domain = this.extractFactoryDomain(factory.templateId);
+
+      // Find matching interface choices
+      // Interface IDs look like: hash:Daml.Finance.Interface.{Domain}.V4.Factory:Factory
+      let interfaceId = '';
+      let interfaceChoices: Array<{ name: string; args: Array<{ name: string; type: string }>; result: string }> = [];
+
+      for (const [iid, choices] of this.interfaceChoicesMap.entries()) {
+        // Match by domain name in the interface ID
+        if (iid.includes(`.${domain}.`) && iid.includes('.Factory:Factory')) {
+          interfaceId = iid;
+          interfaceChoices = choices;
+          break;
+        }
+      }
+
+      // Find reference template for this domain
+      const reference = this.referenceTemplates.get(domain);
+
+      // Create a user-friendly name
+      const friendlyName = this.createFactoryFriendlyName(factory.templateId, domain);
+
+      this.factories.push({
+        name: friendlyName,
+        domain,
+        templateId: factory.templateId,
+        interfaceId,
+        fields: factory.fields,
+        interfaceChoices,
+        referenceTemplateId: reference?.templateId,
+        referenceFields: reference?.fields
+      });
+    }
+  }
+
+  private createFactoryFriendlyName(templateId: string, domain: string): string {
+    // Extract a friendly name from the template ID
+    // e.g., "daml-finance-account-v4:Daml.Finance.Account.V4.Account:Factory" -> "Account"
+    // e.g., "daml-finance-instrument-token-v4:..." -> "Token"
+    const parts = templateId.split(':');
+    if (parts.length >= 2) {
+      const moduleParts = parts[1].split('.');
+      // Find the part after V4 (or similar version) that's not Factory
+      const versionIndex = moduleParts.findIndex(p => /^V\d+$/.test(p));
+      if (versionIndex !== -1 && versionIndex < moduleParts.length - 1) {
+        const afterVersion = moduleParts.slice(versionIndex + 1).filter(p => p !== 'Factory');
+        if (afterVersion.length > 0) {
+          return afterVersion.join('');
+        }
+      }
+    }
+    return domain;
+  }
+
   private simplifyType(typeText: string): string {
     let result = typeText;
 
@@ -404,8 +627,14 @@ class CantonApiGenerator {
     result = result.replace(/Daml\.Finance\.Interface\.Settlement\.V\d+\.\w+\./g, '');
     result = result.replace(/Daml\.Finance\.Interface\.Holding\.V\d+\.\w+\./g, '');
     result = result.replace(/Daml\.Finance\.Interface\.Account\.V\d+\.\w+\./g, '');
+    result = result.replace(/Daml\.Finance\.Interface\.Instrument\.Token\.V\d+\.\w+\./g, '');
+    result = result.replace(/Daml\.Finance\.Interface\.Instrument\.Base\.V\d+\.\w+\./g, '');
+    result = result.replace(/Daml\.Finance\.Interface\.Lifecycle\.V\d+\.\w+\./g, '');
     result = result.replace(/DA\.Types\./g, '');
     result = result.replace(/DA\.Internal\.Template\./g, '');
+
+    // Simplify underscore-separated module references (from TS imports)
+    result = result.replace(/Daml_Finance_Interface_\w+_V\d+_\w+\./g, '');
 
     // Replace damlTypes primitives
     result = result.replace(/damlTypes\.Party/g, 'Party');
@@ -417,6 +646,26 @@ class CantonApiGenerator {
     result = result.replace(/damlTypes\.Int/g, 'Int');
     result = result.replace(/damlTypes\.Bool/g, 'Bool');
     result = result.replace(/damlTypes\.Optional/g, 'Optional');
+
+    // Simplify Map<string, Set<Party>> to Record<string, Party[]>
+    result = result.replace(/damlTypes\.Map<string,\s*DA\.Set\.Types\.Set<Party>>/g, 'Record<string, Party[]>');
+    result = result.replace(/damlTypes\.Map<string,\s*Set<Party>>/g, 'Record<string, Party[]>');
+    result = result.replace(/Map<string,\s*DA\.Set\.Types\.Set<Party>>/g, 'Record<string, Party[]>');
+
+    // Simplify Set<Party> to Party[]
+    result = result.replace(/DA\.Set\.Types\.Set<Party>/g, 'Party[]');
+    result = result.replace(/Set<Party>/g, 'Party[]');
+
+    // Handle Token type conflict (Token type vs Token namespace)
+    // Only replace standalone "Token" that's a type (not "TokenFactory" etc.)
+    if (result === 'Token') {
+      result = 'TokenData';
+    }
+
+    // Handle View types for references
+    if (result === 'View') {
+      result = 'AccountView';
+    }
 
     // Clean up arrays
     result = result.replace(/(\w+)\[\]/g, '$1[]');
@@ -768,6 +1017,381 @@ export * from './interfaces';
     console.log(`   ✓ core/index.ts`);
   }
 
+  private generateEnvFiles(): void {
+    const envContent = `# Canton Ledger Connection Configuration
+# Copy this file to .env and adjust values for your environment
+# These defaults work for local Canton development
+
+# Ledger JSON API host
+LEDGER_HOST=localhost
+
+# Ledger JSON API port
+LEDGER_PORT=7575
+
+# JWT token for authentication (leave empty if not using auth)
+LEDGER_TOKEN=
+`;
+
+    // Write .env.example
+    const examplePath = path.join(this.outputDir, '.env.example');
+    fs.writeFileSync(examplePath, envContent);
+    console.log(`   ✓ .env.example`);
+
+    // Write .env if it doesn't exist
+    const envPath = path.join(this.outputDir, '.env');
+    if (!fs.existsSync(envPath)) {
+      fs.writeFileSync(envPath, envContent);
+      console.log(`   ✓ .env (created from example)`);
+    } else {
+      console.log(`   ⏭ .env (already exists)`);
+    }
+  }
+
+  private generateLedgerConfig(): void {
+    const output = `// ledger/config.ts
+// Canton Ledger Configuration - Auto-loads from .env
+// DO NOT EDIT - Generated by generate-canton-api.ts
+
+import * as fs from 'fs';
+import * as path from 'path';
+
+// ═══════════════════════════════════════════════════════════════
+// ENV FILE LOADER
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Load environment variables from .env file.
+ * Called automatically when this module is imported.
+ */
+function loadEnv(): void {
+  // Try multiple possible locations for .env
+  const possiblePaths = [
+    path.resolve(__dirname, '..', '.env'),      // From ledger/ -> sdk root
+    path.resolve(process.cwd(), '.env'),         // Current working directory
+  ];
+
+  for (const envPath of possiblePaths) {
+    if (fs.existsSync(envPath)) {
+      const content = fs.readFileSync(envPath, 'utf-8');
+      for (const line of content.split('\\n')) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        const eqIndex = trimmed.indexOf('=');
+        if (eqIndex === -1) continue;
+        const key = trimmed.slice(0, eqIndex);
+        const value = trimmed.slice(eqIndex + 1);
+        // Only set if not already set (env vars take precedence)
+        if (key && !process.env[key]) {
+          process.env[key] = value;
+        }
+      }
+      break; // Stop after first .env found
+    }
+  }
+}
+
+// Auto-load .env on module import
+loadEnv();
+
+// ═══════════════════════════════════════════════════════════════
+// CONFIGURATION
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Canton ledger connection configuration.
+ * Values are loaded from environment variables (via .env file or system env).
+ */
+export const config = {
+  /** Ledger JSON API host */
+  ledgerHost: process.env.LEDGER_HOST || 'localhost',
+
+  /** Ledger JSON API port */
+  ledgerPort: process.env.LEDGER_PORT || '7575',
+
+  /** JWT token for authentication (empty if not using auth) */
+  ledgerToken: process.env.LEDGER_TOKEN || '',
+
+  /** Computed base URL for the JSON API */
+  get baseUrl(): string {
+    return \`http://\${this.ledgerHost}:\${this.ledgerPort}\`;
+  },
+
+  /** HTTP headers for API requests */
+  get headers(): Record<string, string> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (this.ledgerToken) {
+      headers['Authorization'] = \`Bearer \${this.ledgerToken}\`;
+    }
+    return headers;
+  }
+};
+
+export type LedgerConfig = typeof config;
+`;
+
+    const outputPath = path.join(this.outputDir, 'ledger', 'config.ts');
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+    fs.writeFileSync(outputPath, output);
+    console.log(`   ✓ ledger/config.ts`);
+  }
+
+  private generateLedgerClient(): void {
+    const output = `// ledger/client.ts
+// Canton JSON API Client
+// DO NOT EDIT - Generated by generate-canton-api.ts
+
+import { config } from './config';
+import type {
+  LedgerConnection,
+  Contract,
+  ContractId,
+  ExerciseResult,
+  Party
+} from '../core/primitives';
+
+// ═══════════════════════════════════════════════════════════════
+// CANTON LEDGER CLIENT
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Canton JSON API client implementing LedgerConnection interface.
+ * Uses the standard Canton JSON API endpoints.
+ *
+ * @example
+ * \`\`\`ts
+ * import { CantonLedgerClient } from './ledger';
+ *
+ * const ledger = new CantonLedgerClient('alice::1220...');
+ * const accounts = await ledger.query(TemplateIds.Account_Account);
+ * \`\`\`
+ */
+export class CantonLedgerClient implements LedgerConnection {
+  private baseUrl: string;
+  private headers: Record<string, string>;
+  private party: Party;
+
+  /**
+   * Create a new Canton ledger client.
+   * @param party - The party identity to act as (required)
+   * @param baseUrl - Override the ledger URL (optional, defaults to config)
+   * @param token - Override the auth token (optional, defaults to config)
+   */
+  constructor(party: Party, baseUrl?: string, token?: string) {
+    if (!party) {
+      throw new Error('Party is required to create a ledger client');
+    }
+    this.party = party;
+    this.baseUrl = baseUrl || config.baseUrl;
+    this.headers = {
+      'Content-Type': 'application/json',
+    };
+    if (token || config.ledgerToken) {
+      this.headers['Authorization'] = \`Bearer \${token || config.ledgerToken}\`;
+    }
+  }
+
+  /** Get the party this client is acting as */
+  getParty(): Party {
+    return this.party;
+  }
+
+  /**
+   * Query contracts by template ID with optional filter.
+   */
+  async query<T>(templateId: string, filter?: Partial<T>): Promise<Contract<T>[]> {
+    const response = await fetch(\`\${this.baseUrl}/v1/query\`, {
+      method: 'POST',
+      headers: this.headers,
+      body: JSON.stringify({
+        templateIds: [templateId],
+        query: filter || {},
+        readers: [this.party],
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(\`Query failed: \${response.status} - \${error}\`);
+    }
+
+    const data = await response.json() as { result?: Array<{ contractId: string; payload: T; createdAt?: string }> };
+    return (data.result || []).map((item) => ({
+      contractId: item.contractId as ContractId<T>,
+      payload: item.payload,
+      createdAt: item.createdAt,
+    }));
+  }
+
+  /**
+   * Create a new contract.
+   */
+  async create<T>(templateId: string, payload: T): Promise<ContractId<T>> {
+    const response = await fetch(\`\${this.baseUrl}/v1/create\`, {
+      method: 'POST',
+      headers: this.headers,
+      body: JSON.stringify({
+        templateId,
+        payload,
+        meta: {
+          actAs: [this.party],
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(\`Create failed: \${response.status} - \${error}\`);
+    }
+
+    const data = await response.json() as { result: { contractId: string } };
+    return data.result.contractId as ContractId<T>;
+  }
+
+  /**
+   * Exercise a choice on a contract.
+   */
+  async exercise<T, R>(
+    contractId: ContractId<T>,
+    choice: string,
+    args: unknown
+  ): Promise<ExerciseResult<R>> {
+    const response = await fetch(\`\${this.baseUrl}/v1/exercise\`, {
+      method: 'POST',
+      headers: this.headers,
+      body: JSON.stringify({
+        contractId,
+        choice,
+        argument: args,
+        meta: {
+          actAs: [this.party],
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(\`Exercise failed: \${response.status} - \${error}\`);
+    }
+
+    const data = await response.json() as { result: { exerciseResult: R; events?: unknown[] } };
+    return {
+      exerciseResult: data.result.exerciseResult,
+      events: data.result.events || [],
+    };
+  }
+
+  /**
+   * Fetch a specific contract by ID.
+   */
+  async fetch<T>(contractId: ContractId<T>): Promise<Contract<T> | null> {
+    const response = await fetch(\`\${this.baseUrl}/v1/fetch\`, {
+      method: 'POST',
+      headers: this.headers,
+      body: JSON.stringify({
+        contractId,
+        readers: [this.party],
+      }),
+    });
+
+    if (!response.ok) {
+      if (response.status === 404) return null;
+      const error = await response.text();
+      throw new Error(\`Fetch failed: \${response.status} - \${error}\`);
+    }
+
+    const data = await response.json() as { result?: { contractId: string; payload: T; createdAt?: string } };
+    if (!data.result) return null;
+
+    return {
+      contractId: data.result.contractId as ContractId<T>,
+      payload: data.result.payload,
+      createdAt: data.result.createdAt,
+    };
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// HELPER FUNCTIONS
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Create a ledger client using configuration from .env.
+ * Convenience function for quick setup.
+ * @param party - The party identity to act as (required)
+ */
+export function createLedgerClient(party: Party): CantonLedgerClient {
+  return new CantonLedgerClient(party);
+}
+
+/**
+ * Check if the ledger is reachable.
+ */
+export async function isLedgerReachable(): Promise<boolean> {
+  try {
+    const response = await fetch(\`\${config.baseUrl}/v1/parties\`, {
+      method: 'GET',
+      headers: config.headers,
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Get all parties from the ledger.
+ */
+export async function getParties(): Promise<Party[]> {
+  const response = await fetch(\`\${config.baseUrl}/v1/parties\`, {
+    method: 'GET',
+    headers: config.headers,
+  });
+
+  if (!response.ok) {
+    throw new Error(\`Failed to get parties: \${response.status}\`);
+  }
+
+  const data = await response.json() as { result?: Party[] };
+  return data.result || [];
+}
+
+/**
+ * Generate a unique ID for test isolation.
+ */
+export function uniqueId(prefix: string = 'test'): string {
+  return \`\${prefix}-\${Date.now()}-\${Math.random().toString(36).slice(2, 8)}\`;
+}
+`;
+
+    const outputPath = path.join(this.outputDir, 'ledger', 'client.ts');
+    fs.writeFileSync(outputPath, output);
+    console.log(`   ✓ ledger/client.ts`);
+  }
+
+  private generateLedgerIndex(): void {
+    const output = `// ledger/index.ts
+// Re-exports all ledger utilities
+// DO NOT EDIT - Generated by generate-canton-api.ts
+
+export { config } from './config';
+export type { LedgerConfig } from './config';
+
+export {
+  CantonLedgerClient,
+  createLedgerClient,
+  isLedgerReachable,
+  getParties,
+  uniqueId,
+} from './client';
+`;
+
+    const outputPath = path.join(this.outputDir, 'ledger', 'index.ts');
+    fs.writeFileSync(outputPath, output);
+    console.log(`   ✓ ledger/index.ts`);
+  }
+
   private generateProjectApi(): void {
     const output = this.buildProjectApi();
     const outputPath = path.join(this.outputDir, `${this.projectName}-api.ts`);
@@ -830,6 +1454,9 @@ export const TemplateIds = {
 
     // Generate DvP workflow
     output += this.generateDvPWorkflow();
+
+    // Generate Factories namespace
+    output += this.generateFactoriesNamespace();
 
     // Add helper types
     output += `
@@ -935,7 +1562,159 @@ export interface Instrument {
   validAsOf: Time;
   observers: Record<string, Party[]>;
 }
+
+/**
+ * Token data for creating token instruments via factory.
+ */
+export interface TokenData {
+  instrument: InstrumentKey;
+  description: string;
+  validAsOf: Time;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// VIEW TYPES (for Reference templates)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Account view for reference templates.
+ */
+export interface AccountView {
+  custodian: Party;
+  owner: Party;
+  id: Id;
+}
+
+/**
+ * Holding factory view for reference templates.
+ */
+export interface HoldingFactoryView {
+  provider: Party;
+  id: Id;
+}
 `;
+
+    return output;
+  }
+
+  private generateFactoriesNamespace(): string {
+    if (this.factories.length === 0) {
+      return '';
+    }
+
+    let output = `
+// ═══════════════════════════════════════════════════════════════
+// FACTORIES
+// ═══════════════════════════════════════════════════════════════
+// Factory templates for creating accounts, holdings, and instruments.
+// These are the infrastructure contracts needed before using workflows.
+//
+// Usage:
+//   // 1. Create the factory
+//   const factoryCid = await ledger.create(Factories.Account.templateId, {
+//     provider: vault,
+//     observers: {}
+//   });
+//
+//   // 2. Use the factory interface to create resources
+//   await ledger.exercise(factoryCid, Factories.Account.choices.Create, {
+//     account: accountKey,
+//     holdingFactory: holdingFactoryKey,
+//     controllers: { outgoing: [], incoming: [] },
+//     description: 'My Account',
+//     observers: {}
+//   });
+// ═══════════════════════════════════════════════════════════════
+
+`;
+
+    // Generate the Factories namespace
+    output += `export namespace Factories {\n\n`;
+
+    for (const factory of this.factories) {
+      output += this.generateSingleFactory(factory);
+    }
+
+    output += `}\n\n`;
+
+    return output;
+  }
+
+  private generateSingleFactory(factory: FactoryTemplate): string {
+    let output = '';
+
+    // Factory namespace comment
+    output += `  /**\n`;
+    output += `   * ${factory.name} Factory\n`;
+    output += `   * Domain: ${factory.domain}\n`;
+    if (factory.interfaceChoices.length > 0) {
+      output += `   * Choices: ${factory.interfaceChoices.map(c => c.name).join(', ')}\n`;
+    }
+    output += `   */\n`;
+
+    output += `  export namespace ${factory.name} {\n`;
+
+    // Template ID
+    output += `    /** Template ID for creating the factory */\n`;
+    output += `    export const templateId = '${factory.templateId}';\n\n`;
+
+    // Interface ID (for exercising choices)
+    if (factory.interfaceId) {
+      output += `    /** Interface ID for exercising factory choices */\n`;
+      output += `    export const interfaceId = '${factory.interfaceId}';\n\n`;
+    }
+
+    // Factory payload type
+    output += `    /** Factory contract payload */\n`;
+    output += `    export interface Payload {\n`;
+    for (const field of factory.fields) {
+      output += `      ${field.name}: ${field.type};\n`;
+    }
+    output += `    }\n\n`;
+
+    // Generate choice argument types and choices object
+    if (factory.interfaceChoices.length > 0) {
+      // Choice argument types
+      for (const choice of factory.interfaceChoices) {
+        if (choice.args.length > 0) {
+          output += `    /** Arguments for ${choice.name} choice */\n`;
+          output += `    export interface ${choice.name}Args {\n`;
+          for (const arg of choice.args) {
+            output += `      ${arg.name}: ${arg.type};\n`;
+          }
+          output += `    }\n\n`;
+        }
+      }
+
+      // Choices object with names
+      output += `    /** Available choices on this factory */\n`;
+      output += `    export const choices = {\n`;
+      for (const choice of factory.interfaceChoices) {
+        output += `      ${choice.name}: '${choice.name}',\n`;
+      }
+      output += `    } as const;\n\n`;
+
+      // Helper function to create factory
+      output += `    /** Create a factory contract payload */\n`;
+      output += `    export function payload(params: Payload): { templateId: string; payload: Payload } {\n`;
+      output += `      return { templateId, payload: params };\n`;
+      output += `    }\n`;
+    }
+
+    // Reference template if available
+    if (factory.referenceTemplateId && factory.referenceFields) {
+      output += `\n    /** Reference template (for key-based lookups) */\n`;
+      output += `    export namespace Reference {\n`;
+      output += `      export const templateId = '${factory.referenceTemplateId}';\n\n`;
+      output += `      export interface Payload {\n`;
+      for (const field of factory.referenceFields) {
+        output += `        ${field.name}: ${field.type};\n`;
+      }
+      output += `      }\n`;
+      output += `    }\n`;
+    }
+
+    output += `  }\n\n`;
 
     return output;
   }
