@@ -29,24 +29,24 @@ Pre-configured Docker environment for Canton/DAML development. Eliminates manual
 
 **Files:**
 - **Dockerfile** - Shared base with DAML SDK + tooling
-- **latest/** - SDK 3.x (Canton 3.4.8)
+- **latest/** - SDK 3.x
 - **stable/** - SDK 2.x
 - **install-daml-vsix.sh** - Auto-installs DAML IDE extension
-- **daml-lsp-restart.sh** - Language server helper
+- **daml-lsp-restart.sh** - Language server restarter helper
 
 ### Claude Code Integration
 **Problem:** DAML's `codegen js` produces verbose, deeply-nested TypeScript with package hashes and complex type paths—difficult to use directly in applications.
 
-**Solution:** AI-assisted SDK generation via slash command:
+**Solution:** AI-assisted SDK generation via Skill (auto-invoked when you mention "generate canton SDK"):
 
-```bash
-/project:generate-api
+```
+Generate a TypeScript API from my Daml contracts
 ```
 
-Transforms raw Daml JS bindings → clean, documented TypeScript API:
-- Parses `daml.yaml` / `multi-package.yaml` projects
+Claude automatically:
+- Discovers `daml.yaml` / `multi-package.yaml` projects
 - Runs `daml build` + `daml codegen js`
-- Generates type-safe SDK with workflows (CreateAccount, Transfer, DvP, etc.)
+- Generates type-safe SDK
 - Produces test suite with Vitest
 
 **Output structure:**
@@ -61,21 +61,20 @@ sdk/
     └── <project>-api.test.ts
 ```
 
+**Skill location:** `.claude/skills/canton-sdk-generator/`
+
 ## Getting Started
 1. Run scaffold command
 2. Open in VS Code/Cursor
 3. "Reopen in Container" → choose **latest** or **stable**
-4. (Optional) Run `/project:generate-api` to generate TypeScript SDK
-
-## Forwarded Ports
-`5011` `5012` `5021` `5022` `5018` `5019` `7500` `7575`
+4. (Optional) Ask Claude to generate TypeScript SDK from your Daml contracts
 
 ## Local Development
 ```bash
-# From repo root
-bunx --bun link
+# From package directory
+cd packages/canton-devenv-start
+bun link
 
 # In test workspace
-bun link canton-devenv-start
-bunx devenv-init --dir /tmp/test-canton-env --force
+bunx canton-devenv-start
 ```
