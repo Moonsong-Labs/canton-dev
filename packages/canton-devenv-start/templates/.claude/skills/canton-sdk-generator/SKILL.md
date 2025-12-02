@@ -1,5 +1,6 @@
 ---
-description: Generate TypeScript API from Daml contracts - builds, generates bindings, creates clean API, and generates tests
+name: canton-sdk-generator
+description: Generate TypeScript API from Daml smart contracts. Use when user mentions "generate canton SDK".
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion
 ---
 
@@ -66,13 +67,16 @@ Where:
 
 ## STEP 5: Run Generator Script
 
-Ensure the output directory has dependencies, then run the generator:
+Ensure the output directory has dependencies, then run the generator.
+
+The generator script is located in this skill's directory at `scripts/generate-canton-api.ts`.
 
 ```bash
-cd <sdk-path> && npm install && npx ts-node <repo-root>/.claude/commands/canton-sdk-generator/scripts/generate-canton-api.ts daml-js . <project-name>
+cd <sdk-path> && npm install && npx ts-node <path-to-skill>/scripts/generate-canton-api.ts daml-js . <project-name>
 ```
 
 Where:
+- `<path-to-skill>` is the absolute path to this skill's directory
 - `<sdk-path>` defaults to `<project-path>/sdk`
 - `<project-name>` is the name discovered in Step 1
 - Output will be written to `<sdk-path>/`
@@ -91,10 +95,7 @@ Fix any errors before proceeding.
 
 ## STEP 7: Enhance the Generated API
 
-Read and apply the enhancement instructions from:
-```
-.claude/commands/canton-sdk-generator/prompts/enhance-api.md
-```
+Read and apply the enhancement instructions from `prompts/enhance-api.md` in this skill's directory.
 
 Add the following to `<project-name>-api.ts`:
 1. **Query namespace** - Helper functions for querying contracts
@@ -110,10 +111,12 @@ After adding enhancements, re-validate TypeScript.
 
 ## STEP 8: Generate Tests
 
-Run the test generator to create explicit tests for the generated API:
+Run the test generator to create explicit tests for the generated API.
+
+The test generator script is at `scripts/generate-canton-tests.ts` in this skill's directory.
 
 ```bash
-cd <sdk-path> && npx ts-node <repo-root>/.claude/commands/canton-sdk-generator/scripts/generate-canton-tests.ts . <project-name>
+cd <sdk-path> && npx ts-node <path-to-skill>/scripts/generate-canton-tests.ts . <project-name>
 ```
 
 This will:
