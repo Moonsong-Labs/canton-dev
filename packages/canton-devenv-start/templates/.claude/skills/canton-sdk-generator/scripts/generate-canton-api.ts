@@ -17,52 +17,362 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as ts from 'typescript';
 
-// === CONFIGURATION ===
 
-interface WorkflowChoice {
+// ═══════════════════════════════════════════════════════════════
+// INTERMEDIATE REPRESENTATION (IR)
+// ═══════════════════════════════════════════════════════════════
+// Daml-agnostic IR for template classification and code generation.
+// Templates are classified by STRUCTURE, not naming conventions.
+
+/** Field definition in a template or choice */
+interface FieldIR {
   name: string;
-  args: string;
-  result: string;
-  description: string;
+  type: string;
+  description?: string;
 }
 
-interface WorkflowTemplate {
+/** Choice definition with structural analysis */
+interface ChoiceIR {
   name: string;
-  modulePath: string;
+  consuming: boolean;
+  controllers: string[];
+  params: FieldIR[];
+  returnType: string;
+  /** Templates created by this choice (for classification) */
+  createsTemplates: string[];
+  /** Does this choice archive the contract? */
+  archivesSelf: boolean;
+}
+
+/** Key definition for contract lookup */
+interface KeyIR {
+  type: string;
+  fields: string[];
+}
+
+/** Template role - classified by structural analysis */
+type TemplateRole = 'workflow' | 'factory' | 'state' | 'asset';
+
+/** Complete template IR with structural classification */
+interface TemplateIR {
   templateId: string;
-  fields: Array<{ name: string; type: string; description: string }>;
-  choices: WorkflowChoice[];
-  description: string;
-}
-
-interface ParsedModule {
-  domain: string;
+  modulePath: string;
   name: string;
   qualifiedName: string;
-  templateId: string;
-  fields: Array<{ name: string; type: string }>;
-  choices: Array<{ name: string; args: string; result: string }>;
-  isWorkflow: boolean;
+  fields: FieldIR[];
+  choices: ChoiceIR[];
+  key?: KeyIR;
+  signatories: string[];
+  observers: string[];
+  /** Computed role based on structural analysis */
+  role: TemplateRole;
+  /** For workflows: the workflow name (e.g., "CreateAccount", "Deposit") */
+  workflowName?: string;
+  /** For workflows: type of request pattern */
   workflowType?: 'Request' | 'Proposal';
 }
 
-interface FactoryTemplate {
-  /** Factory name (e.g., "Account", "Holding", "Token") */
+// ═══════════════════════════════════════════════════════════════
+// STRUCTURAL CLASSIFICATION
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Check if module path contains a specific segment (case-insensitive).
+ * Returns the index if found, -1 otherwise.
+ */
+function findModuleSegment(pathParts: string[], segment: string): number {
+  return pathParts.findIndex(p => p.toLowerCase() === segment.toLowerCase());
+}
+
+/**
+ * Classify a template by its module path and structural characteristics.
+ * Rules (in order of precedence):
+ * 1. WORKFLOW: Module path contains "Workflow" (e.g., Workflow.CreateAccount)
+ * 2. FACTORY: Module path contains "Factory" OR template name is "Factory"
+ * 3. ASSET: Module path contains "Holding" OR has holding fields (fallback)
+ * 4. STATE: Default for everything else
+ */
+function classifyTemplate(template: {
   name: string;
-  /** Domain category (e.g., "Account", "Holding", "Instrument") */
-  domain: string;
-  /** Template ID for the implementation factory */
-  templateId: string;
-  /** Interface ID for exercising choices */
-  interfaceId: string;
-  /** Fields for creating the factory */
-  fields: Array<{ name: string; type: string }>;
-  /** Choices available on the factory interface (e.g., Create) */
-  interfaceChoices: Array<{ name: string; args: Array<{ name: string; type: string }>; result: string }>;
-  /** Reference template ID if applicable */
-  referenceTemplateId?: string;
-  /** Reference fields if applicable */
-  referenceFields?: Array<{ name: string; type: string }>;
+  fields: FieldIR[];
+  choices: ChoiceIR[];
+  modulePath: string;
+}): { role: TemplateRole; workflowName?: string; workflowType?: 'Request' | 'Proposal' } {
+  const pathParts = template.modulePath.split('.');
+
+  // 1. WORKFLOW: Module path contains "Workflow"
+  const workflowIndex = findModuleSegment(pathParts, 'workflow');
+  if (workflowIndex >= 0) {
+    const workflowName = workflowIndex < pathParts.length - 1
+      ? pathParts[workflowIndex + 1]
+      : template.name.replace(/Request|Proposal/, '');
+
+    const workflowType: 'Request' | 'Proposal' =
+      template.name === 'Proposal' || template.name.endsWith('Proposal') ? 'Proposal' : 'Request';
+
+    return { role: 'workflow', workflowName, workflowType };
+  }
+
+  // 2. FACTORY: Module path contains "Factory" OR template name is "Factory"
+  const isFactoryModule = findModuleSegment(pathParts, 'factory') >= 0;
+  if (isFactoryModule || template.name === 'Factory') {
+    return { role: 'factory' };
+  }
+
+  // 3. ASSET: Module path contains "Holding" OR has holding fields (fallback)
+  const isHoldingModule = findModuleSegment(pathParts, 'holding') >= 0;
+  if (isHoldingModule) {
+    return { role: 'asset' };
+  }
+
+  // Fallback: field-based detection for non-standard projects
+  const fieldNames = template.fields.map(f => f.name.toLowerCase());
+  const hasHoldingFields = fieldNames.includes('amount') &&
+    (fieldNames.includes('instrument') || fieldNames.includes('account'));
+  if (hasHoldingFields) {
+    return { role: 'asset' };
+  }
+
+  // 4. STATE: Default
+  return { role: 'state' };
+}
+
+/**
+ * Build TemplateIR from parsed module data.
+ * Classification is determined by structural analysis only.
+ */
+function buildTemplateIR(
+  parsed: {
+    templateId: string;
+    modulePath: string;
+    name: string;
+    fields: Array<{ name: string; type: string }>;
+    choices: Array<{ name: string; args: string; result: string; consuming?: boolean }>;
+  }
+): TemplateIR {
+  const fields: FieldIR[] = parsed.fields.map(f => ({
+    name: f.name,
+    type: f.type,
+  }));
+
+  const choices: ChoiceIR[] = parsed.choices.map(c => ({
+    name: c.name,
+    consuming: c.consuming ?? true,
+    controllers: [],
+    params: [],
+    returnType: c.result,
+    createsTemplates: extractCreatedTemplates(c.result),
+    archivesSelf: c.consuming ?? true,
+  }));
+
+  const qualifiedName = createQualifiedName(parsed.templateId, parsed.modulePath, parsed.name);
+
+  const classification = classifyTemplate({
+    name: parsed.name,
+    fields,
+    choices,
+    modulePath: parsed.modulePath,
+  });
+
+  return {
+    templateId: parsed.templateId,
+    modulePath: parsed.modulePath,
+    name: parsed.name,
+    qualifiedName,
+    fields,
+    choices,
+    signatories: [],
+    observers: [],
+    ...classification,
+  };
+}
+
+function extractCreatedTemplates(returnType: string): string[] {
+  const matches = returnType.match(/ContractId<(\w+)>/g);
+  if (!matches) return [];
+  return matches.map(m => m.replace(/ContractId<|>/g, ''));
+}
+
+function sanitizeReturnType(returnType: string): string {
+  if (!returnType || returnType === 'void' || returnType === '{}' || returnType === '{') {
+    return 'void';
+  }
+
+  const trimmed = returnType.trim();
+
+  const openBrackets = (trimmed.match(/</g) || []).length;
+  const closeBrackets = (trimmed.match(/>/g) || []).length;
+  if (openBrackets !== closeBrackets) {
+    console.warn(`⚠️  Unbalanced generics in return type: ${trimmed}`);
+    return 'unknown';
+  }
+
+  if (trimmed.startsWith('Tuple2<')) {
+    const inner = trimmed.match(/Tuple2<(.+)>/)?.[1];
+    if (inner) {
+      const parts = splitGenericArgs(inner);
+      if (parts.length === 2) {
+        return `[${parts[0]}, ${parts[1]}]`;
+      }
+    }
+    return 'unknown';
+  }
+
+  if (trimmed.startsWith('Tuple3<')) {
+    const inner = trimmed.match(/Tuple3<(.+)>/)?.[1];
+    if (inner) {
+      const parts = splitGenericArgs(inner);
+      if (parts.length === 3) {
+        return `[${parts[0]}, ${parts[1]}, ${parts[2]}]`;
+      }
+    }
+    return 'unknown';
+  }
+
+  if (trimmed.match(/^ContractId<.+>$/)) {
+    return trimmed;
+  }
+
+  return trimmed;
+}
+
+function splitGenericArgs(argsStr: string): string[] {
+  const parts: string[] = [];
+  let current = '';
+  let depth = 0;
+
+  for (let i = 0; i < argsStr.length; i++) {
+    const char = argsStr[i];
+    if (char === '<') {
+      depth++;
+      current += char;
+    } else if (char === '>') {
+      depth--;
+      current += char;
+    } else if (char === ',' && depth === 0) {
+      parts.push(current.trim());
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+
+  if (current.trim()) {
+    parts.push(current.trim());
+  }
+
+  return parts;
+}
+
+function createQualifiedName(templateId: string, modulePath: string, name: string): string {
+  // Use full module path to ensure uniqueness
+  // This prevents collisions like multiple "Factory" templates from different modules
+  const parts = templateId.split(':');
+  if (parts.length >= 2) {
+    const modulePathPart = parts[1];
+    const pathParts = modulePathPart.split('.');
+    
+    // Find version marker (V1, V2, etc.) and use everything after it
+    const versionIndex = pathParts.findIndex(p => /^V\d+$/.test(p));
+    
+    if (versionIndex !== -1 && versionIndex < pathParts.length - 1) {
+      // Include ALL path parts after version for uniqueness
+      // e.g., Daml.Finance.Instrument.Equity.V1.Instrument.Instrument 
+      //       -> Instrument_Equity_Instrument (using parts before V and after V)
+      const beforeVersion = pathParts.slice(Math.max(0, versionIndex - 1), versionIndex);
+      const afterVersion = pathParts.slice(versionIndex + 1);
+      
+      // Combine: domain (before version) + subpath (after version) + name
+      const allParts = [...beforeVersion, ...afterVersion];
+      
+      // Remove duplicates of the name itself
+      const uniqueParts = allParts.filter((p, i) => 
+        p !== name || i === allParts.length - 1
+      );
+      
+      if (uniqueParts.length > 0 && uniqueParts[uniqueParts.length - 1] !== name) {
+        return `${uniqueParts.join('_')}_${name}`;
+      }
+      return uniqueParts.join('_');
+    }
+  }
+
+  // Fallback: use full module path
+  const modulePathParts = modulePath.split('.');
+  if (modulePathParts.length >= 2) {
+    // Use last 3 parts for more context (or all if less than 3)
+    const relevantParts = modulePathParts.slice(-3);
+    const uniqueParts = relevantParts.filter((p, i) => 
+      p !== name || i === relevantParts.length - 1
+    );
+    if (uniqueParts[uniqueParts.length - 1] !== name) {
+      return `${uniqueParts.join('_')}_${name}`;
+    }
+    return uniqueParts.join('_');
+  }
+
+  const domain = extractDomainFromPath(modulePath);
+  if (domain !== name) {
+    return `${domain}_${name}`;
+  }
+  return name;
+}
+
+/**
+ * Resolve duplicate qualified names by adding more context.
+ * Call this after all templates are collected.
+ */
+function resolveDuplicateQualifiedNames(templates: TemplateIR[]): void {
+  // Find duplicates
+  const nameCount = new Map<string, TemplateIR[]>();
+  for (const template of templates) {
+    const existing = nameCount.get(template.qualifiedName) || [];
+    existing.push(template);
+    nameCount.set(template.qualifiedName, existing);
+  }
+  
+  // Resolve duplicates by using more of the module path
+  for (const [name, duplicates] of nameCount) {
+    if (duplicates.length > 1) {
+      for (const template of duplicates) {
+        // Use the full module path split by dots, joined with underscores
+        const fullPath = template.modulePath.replace(/\./g, '_');
+        template.qualifiedName = `${fullPath}_${template.name}`;
+      }
+    }
+  }
+}
+
+function extractPackageDomain(packageName: string): string | null {
+  const lowerName = packageName.toLowerCase();
+  const commonDomains = ['account', 'holding', 'instrument', 'settlement', 'lifecycle', 'workflow', 'token', 'factory'];
+
+  for (const domain of commonDomains) {
+    if (lowerName.includes(domain)) {
+      return domain.charAt(0).toUpperCase() + domain.slice(1);
+    }
+  }
+
+  const parts = packageName.split('.');
+  for (const part of parts) {
+    if (part.length > 3 && /^[A-Z][a-z]+$/.test(part)) {
+      return part;
+    }
+  }
+
+  return null;
+}
+
+function extractDomainFromPath(modulePath: string): string {
+  const parts = modulePath.split('.');
+
+  for (const part of parts) {
+    if (part.length > 3 && /^[A-Z][a-z]+$/.test(part) && !part.match(/^V\d+$/)) {
+      return part;
+    }
+  }
+
+  return parts[parts.length - 1] || 'Other';
 }
 
 // === PRIMITIVES (Static - never change) ===
@@ -182,7 +492,7 @@ export interface ExerciseResult<T> {
 export interface LedgerConnection {
   query<T>(templateId: string, filter?: Partial<T>): Promise<Contract<T>[]>;
   create<T>(templateId: string, payload: T): Promise<ContractId<T>>;
-  exercise<T, R>(contractId: ContractId<T>, choice: string, args: unknown): Promise<ExerciseResult<R>>;
+  exercise<T, R>(templateId: string, contractId: ContractId<T>, choice: string, args: unknown): Promise<ExerciseResult<R>>;
   fetch<T>(contractId: ContractId<T>): Promise<Contract<T> | null>;
 }
 `;
@@ -193,18 +503,30 @@ class CantonApiGenerator {
   private damlJsDir: string;
   private outputDir: string;
   private projectName: string;
-  private aliasMap = new Map<string, string>();
-  private modules: ParsedModule[] = [];
+  private templates: TemplateIR[] = [];
   private interfaces = new Map<string, string>();
-  private workflowTemplates: WorkflowTemplate[] = [];
-  private factories: FactoryTemplate[] = [];
   private interfaceChoicesMap = new Map<string, Array<{ name: string; args: Array<{ name: string; type: string }>; result: string }>>();
-  private referenceTemplates = new Map<string, { templateId: string; fields: Array<{ name: string; type: string }> }>();
 
   constructor(damlJsDir: string, outputDir: string, projectName: string) {
     this.damlJsDir = damlJsDir;
     this.outputDir = outputDir;
     this.projectName = projectName;
+  }
+
+  get workflows(): TemplateIR[] {
+    return this.templates.filter(t => t.role === 'workflow');
+  }
+
+  get factories(): TemplateIR[] {
+    return this.templates.filter(t => t.role === 'factory');
+  }
+
+  get assets(): TemplateIR[] {
+    return this.templates.filter(t => t.role === 'asset');
+  }
+
+  get states(): TemplateIR[] {
+    return this.templates.filter(t => t.role === 'state');
   }
 
   generate(): void {
@@ -215,6 +537,9 @@ class CantonApiGenerator {
 
     // 1. Scan and parse all modules
     this.scanModules();
+    
+    // 1.5. Resolve any duplicate qualified names
+    resolveDuplicateQualifiedNames(this.templates);
 
     // 2. Generate core files
     this.generateCorePrimitives();
@@ -224,24 +549,43 @@ class CantonApiGenerator {
     // 3. Generate ledger connection files
     this.generateLedgerConfig();
     this.generateLedgerClient();
+    this.generateLedgerErrors();
+    this.generateLedgerRetry();
+    this.generateLedgerStreaming();
+    this.generateLedgerResolver();
     this.generateLedgerIndex();
 
-    // 4. Generate environment config files
+    // 4. Generate utils
+    this.generateUtils();
+
+    // 5. Generate environment config files
     this.generateEnvFiles();
 
-    // 5. Generate project API
+    // 6. Generate project API
     this.generateProjectApi();
+
+    // 7. Generate package.json
+    this.generatePackageJson();
+
+    // 8. Generate tsconfig.json
+    this.generateTsConfig();
+
+    // 9. Generate README.md
+    this.generateReadme();
+
+    // 10. Generate .gitignore
+    this.generateGitignore();
 
     console.log(`\n✅ Generation complete!`);
     console.log(`   Files created:`);
-    console.log(`   - .env.example (configuration template)`);
-    console.log(`   - .env (copy of example)`);
-    console.log(`   - core/primitives.ts`);
-    console.log(`   - core/interfaces.ts`);
-    console.log(`   - core/index.ts`);
-    console.log(`   - ledger/config.ts (auto-loads .env)`);
-    console.log(`   - ledger/client.ts (Canton JSON API client)`);
-    console.log(`   - ledger/index.ts`);
+    console.log(`   - package.json`);
+    console.log(`   - tsconfig.json`);
+    console.log(`   - README.md`);
+    console.log(`   - .gitignore`);
+    console.log(`   - .env.example`);
+    console.log(`   - core/primitives.ts, interfaces.ts, index.ts`);
+    console.log(`   - ledger/config.ts, client.ts, errors.ts, retry.ts, streaming.ts, resolver.ts, index.ts`);
+    console.log(`   - utils/amounts.ts, ids.ts, datetime.ts, index.ts`);
     console.log(`   - ${this.projectName}-api.ts\n`);
   }
 
@@ -253,25 +597,27 @@ class CantonApiGenerator {
 
     console.log(`📂 Scanning ${packages.length} packages...`);
 
-    // First pass: scan all modules to collect templates, interfaces, and choices
     for (const pkg of packages) {
       this.scanPackage(pkg);
     }
 
-    // Second pass: build factory templates by matching implementations with interfaces
-    this.buildFactoryTemplates();
-
-    console.log(`   Found ${this.modules.length} templates`);
-    console.log(`   Found ${this.workflowTemplates.length} workflow templates`);
-    console.log(`   Found ${this.factories.length} factories`);
+    console.log(`   Found ${this.templates.length} templates`);
+    console.log(`   ├── Workflows: ${this.workflows.length}`);
+    console.log(`   ├── Factories: ${this.factories.length}`);
+    console.log(`   ├── Assets: ${this.assets.length}`);
+    console.log(`   └── State: ${this.states.length}`);
     console.log(`   Found ${this.interfaces.size} interfaces`);
   }
 
   private scanPackage(pkgName: string): void {
-    const libDir = path.join(this.damlJsDir, pkgName, 'lib');
-    if (!fs.existsSync(libDir)) return;
+    try {
+      const libDir = path.join(this.damlJsDir, pkgName, 'lib');
+      if (!fs.existsSync(libDir)) return;
 
-    this.scanDirectory(libDir, pkgName);
+      this.scanDirectory(libDir, pkgName);
+    } catch (error) {
+      console.warn(`⚠️  Failed to scan package ${pkgName}: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   private scanDirectory(dir: string, pkgName: string): void {
@@ -289,52 +635,43 @@ class CantonApiGenerator {
   }
 
   private parseModuleFile(filePath: string, pkgName: string): void {
-    const content = fs.readFileSync(filePath, 'utf-8');
-    const sourceFile = ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true);
+    try {
+      const content = fs.readFileSync(filePath, 'utf-8');
+      const sourceFile = ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true);
 
-    // Extract path from file location
-    const relativePath = path.relative(path.join(this.damlJsDir, pkgName, 'lib'), filePath);
-    const modulePath = path.dirname(relativePath).replace(/\//g, '.');
+      const relativePath = path.relative(path.join(this.damlJsDir, pkgName, 'lib'), filePath);
+      const modulePath = path.dirname(relativePath).replace(/\//g, '.');
+      const isInterface = modulePath.includes('Interface');
+      const isFactoryModule = modulePath.endsWith('.Factory') || modulePath.includes('.Factory.');
 
-    // Check if this is a workflow
-    const isWorkflow = modulePath.includes('Workflow');
-    // Check if this is an interface module (for interface choices)
-    const isInterface = modulePath.includes('Interface');
-    // Check if this is a factory module
-    const isFactoryModule = modulePath.endsWith('.Factory') || modulePath.includes('.Factory.');
-
-    // Parse type declarations
-    ts.forEachChild(sourceFile, (node) => {
-      if (ts.isTypeAliasDeclaration(node)) {
-        this.parseTypeAlias(node, modulePath, pkgName, isWorkflow);
-      } else if (ts.isInterfaceDeclaration(node)) {
-        this.parseInterface(node, modulePath, pkgName, isWorkflow);
-        // Also check for interface choices (like Create on Factory interfaces)
-        if (isInterface && isFactoryModule) {
-          this.parseInterfaceChoices(node, modulePath, pkgName, content);
+      ts.forEachChild(sourceFile, (node) => {
+        if (ts.isTypeAliasDeclaration(node)) {
+          this.parseTypeAlias(node, modulePath);
+        } else if (ts.isInterfaceDeclaration(node)) {
+          this.parseInterface(node, modulePath);
+          if (isInterface && isFactoryModule) {
+            this.parseInterfaceChoices(node, modulePath, pkgName, content);
+          }
+        } else if (ts.isVariableStatement(node)) {
+          this.parseTemplateVariable(node, modulePath, pkgName, content);
         }
-      } else if (ts.isVariableStatement(node)) {
-        this.parseTemplateVariable(node, modulePath, pkgName, content, isWorkflow);
-        // Also check for Reference templates
-        this.parseReferenceTemplate(node, modulePath, pkgName, content);
-      }
-    });
+      });
+    } catch (error) {
+      console.warn(`⚠️  Failed to parse module file ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
-  private parseTypeAlias(node: ts.TypeAliasDeclaration, modulePath: string, pkgName: string, isWorkflow: boolean): void {
+  private parseTypeAlias(node: ts.TypeAliasDeclaration, _modulePath: string): void {
     const name = node.name.text;
     const typeText = node.type ? node.type.getText() : 'unknown';
 
-    // Collect interfaces for core/interfaces.ts
-    if (!isWorkflow && this.isFinanceInterface(name)) {
+    if (this.isFinanceInterface(name)) {
       this.interfaces.set(name, this.simplifyType(typeText));
     }
   }
 
-  private parseInterface(node: ts.InterfaceDeclaration, modulePath: string, pkgName: string, isWorkflow: boolean): void {
+  private parseInterface(node: ts.InterfaceDeclaration, _modulePath: string): void {
     const name = node.name.text;
-
-    // Skip internal interfaces
     if (name.endsWith('Interface') || name.includes('Companion')) return;
 
     const fields: Array<{ name: string; type: string }> = [];
@@ -357,47 +694,33 @@ class CantonApiGenerator {
     }
   }
 
-  private parseTemplateVariable(node: ts.VariableStatement, modulePath: string, pkgName: string, content: string, isWorkflow: boolean): void {
+  private parseTemplateVariable(node: ts.VariableStatement, modulePath: string, _pkgName: string, content: string): void {
     for (const decl of node.declarationList.declarations) {
-      if (!ts.isIdentifier(decl.name)) continue;
+      try {
+        if (!ts.isIdentifier(decl.name)) continue;
 
-      const name = decl.name.text;
-      const typeText = decl.type ? decl.type.getText() : '';
+        const name = decl.name.text;
+        const typeText = decl.type ? decl.type.getText() : '';
 
-      // Check if this is a template
-      const templateMatch = typeText.match(/Template<([^,]+),.*'#([^']+)'/);
-      if (!templateMatch) continue;
+        const templateMatch = typeText.match(/Template<([^,]+),.*'#([^']+)'/);
+        if (!templateMatch) continue;
 
-      const templateId = templateMatch[2];
-      const fields = this.extractTemplateFields(content, name);
-      const choices = this.extractTemplateChoices(content, name);
+        const templateId = templateMatch[2];
 
-      const domain = this.extractDomain(modulePath);
-      const qualifiedName = this.createUniqueQualifiedName(templateId, modulePath, name, isWorkflow);
+        const fields = this.extractTemplateFields(content, name);
+        const choices = this.extractTemplateChoices(content, name);
 
-      const module: ParsedModule = {
-        domain,
-        name,
-        qualifiedName,
-        templateId,
-        fields,
-        choices,
-        isWorkflow,
-        workflowType: name === 'Request' || name === 'Proposal' ? name : undefined
-      };
-
-      this.modules.push(module);
-
-      // If workflow, create WorkflowTemplate
-      if (isWorkflow && (name === 'Request' || name === 'Proposal')) {
-        this.workflowTemplates.push({
-          name: modulePath.split('.').pop() || name,
-          modulePath,
+        const templateIR = buildTemplateIR({
           templateId,
-          fields: fields.map(f => ({ ...f, description: '' })),
-          choices: choices.map(c => ({ ...c, description: this.getChoiceDescription(c.name) })),
-          description: this.getWorkflowDescription(modulePath)
+          modulePath,
+          name,
+          fields,
+          choices,
         });
+
+        this.templates.push(templateIR);
+      } catch (error) {
+        console.warn(`⚠️  Failed to parse template variable in ${modulePath}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   }
@@ -406,7 +729,11 @@ class CantonApiGenerator {
     const fields: Array<{ name: string; type: string }> = [];
 
     // Match type declaration for template
-    const typeRegex = new RegExp(`export declare type ${templateName} = \\{([^}]+)\\}`, 's');
+    // Use [\s\S]*? to handle nested braces in field types (e.g., Record<string, {}> )
+    const typeRegex = new RegExp(
+      `export declare type ${templateName} = \\{([\\s\\S]*?)\\};`,
+      'm'
+    );
     const match = content.match(typeRegex);
 
     if (match) {
@@ -429,7 +756,13 @@ class CantonApiGenerator {
     const choices: Array<{ name: string; args: string; result: string }> = [];
 
     // Match interface declaration for choices
-    const interfaceRegex = new RegExp(`export declare interface ${templateName}Interface \\{([^}]+)\\}`, 's');
+    // Use [\s\S]*? to match any character including newlines, and stop at } followed by 
+    // whitespace and either 'export' or end of content. This handles {} inside the interface
+    // (e.g., Archive choice with {} result type) without stopping prematurely.
+    const interfaceRegex = new RegExp(
+      `export declare interface ${templateName}Interface \\{([\\s\\S]*?)\\}\\s*(?=export|$)`,
+      'm'
+    );
     const match = content.match(interfaceRegex);
 
     if (match) {
@@ -453,7 +786,7 @@ class CantonApiGenerator {
     return choices;
   }
 
-  private parseInterfaceChoices(node: ts.InterfaceDeclaration, modulePath: string, pkgName: string, content: string): void {
+  private parseInterfaceChoices(node: ts.InterfaceDeclaration, _modulePath: string, _pkgName: string, content: string): void {
     const name = node.name.text;
 
     // Only process FactoryInterface declarations (not ReferenceInterface)
@@ -501,7 +834,11 @@ class CantonApiGenerator {
     const fields: Array<{ name: string; type: string }> = [];
 
     // Match type declaration: export declare type ArgsType = { field: Type; ... }
-    const typeRegex = new RegExp(`export declare type ${argsTypeName} = \\{([^}]+)\\}`, 's');
+    // Use [\s\S]*? to handle nested braces in field types
+    const typeRegex = new RegExp(
+      `export declare type ${argsTypeName} = \\{([\\s\\S]*?)\\};`,
+      'm'
+    );
     const match = content.match(typeRegex);
 
     if (match) {
@@ -518,102 +855,6 @@ class CantonApiGenerator {
     }
 
     return fields;
-  }
-
-  private parseReferenceTemplate(node: ts.VariableStatement, modulePath: string, pkgName: string, content: string): void {
-    for (const decl of node.declarationList.declarations) {
-      if (!ts.isIdentifier(decl.name)) continue;
-
-      const name = decl.name.text;
-      if (name !== 'Reference') continue;
-
-      const typeText = decl.type ? decl.type.getText() : '';
-
-      // Check if this is a template: Template<Reference, ..., '#templateId'>
-      const templateMatch = typeText.match(/Template<Reference,[^,]*,\s*'#([^']+)'/);
-      if (!templateMatch) continue;
-
-      const templateId = templateMatch[1];
-      const fields = this.extractTemplateFields(content, 'Reference');
-
-      // Store with the factory domain as key (e.g., "Holding.Factory" -> Holding)
-      const domain = this.extractFactoryDomain(modulePath);
-      this.referenceTemplates.set(domain, { templateId, fields });
-    }
-  }
-
-  private extractFactoryDomain(modulePath: string): string {
-    // Extract domain from module path like "Daml.Finance.Interface.Holding.V4.Factory"
-    const parts = modulePath.split('.');
-    const factoryIndex = parts.findIndex(p => p === 'Factory');
-    if (factoryIndex > 0) {
-      return parts[factoryIndex - 1]; // e.g., "Holding", "Account", "Instrument"
-    }
-    // Try to find domain before version marker
-    const versionIndex = parts.findIndex(p => /^V\d+$/.test(p));
-    if (versionIndex > 0) {
-      return parts[versionIndex - 1];
-    }
-    return parts[parts.length - 2] || 'Unknown';
-  }
-
-  private buildFactoryTemplates(): void {
-    // Find all factory implementation templates (name === 'Factory')
-    const factoryModules = this.modules.filter(m => m.name === 'Factory' && !m.isWorkflow);
-
-    for (const factory of factoryModules) {
-      const domain = this.extractFactoryDomain(factory.templateId);
-
-      // Find matching interface choices
-      // Interface IDs look like: hash:Daml.Finance.Interface.{Domain}.V4.Factory:Factory
-      let interfaceId = '';
-      let interfaceChoices: Array<{ name: string; args: Array<{ name: string; type: string }>; result: string }> = [];
-
-      for (const [iid, choices] of this.interfaceChoicesMap.entries()) {
-        // Match by domain name in the interface ID
-        if (iid.includes(`.${domain}.`) && iid.includes('.Factory:Factory')) {
-          interfaceId = iid;
-          interfaceChoices = choices;
-          break;
-        }
-      }
-
-      // Find reference template for this domain
-      const reference = this.referenceTemplates.get(domain);
-
-      // Create a user-friendly name
-      const friendlyName = this.createFactoryFriendlyName(factory.templateId, domain);
-
-      this.factories.push({
-        name: friendlyName,
-        domain,
-        templateId: factory.templateId,
-        interfaceId,
-        fields: factory.fields,
-        interfaceChoices,
-        referenceTemplateId: reference?.templateId,
-        referenceFields: reference?.fields
-      });
-    }
-  }
-
-  private createFactoryFriendlyName(templateId: string, domain: string): string {
-    // Extract a friendly name from the template ID
-    // e.g., "daml-finance-account-v4:Daml.Finance.Account.V4.Account:Factory" -> "Account"
-    // e.g., "daml-finance-instrument-token-v4:..." -> "Token"
-    const parts = templateId.split(':');
-    if (parts.length >= 2) {
-      const moduleParts = parts[1].split('.');
-      // Find the part after V4 (or similar version) that's not Factory
-      const versionIndex = moduleParts.findIndex(p => /^V\d+$/.test(p));
-      if (versionIndex !== -1 && versionIndex < moduleParts.length - 1) {
-        const afterVersion = moduleParts.slice(versionIndex + 1).filter(p => p !== 'Factory');
-        if (afterVersion.length > 0) {
-          return afterVersion.join('');
-        }
-      }
-    }
-    return domain;
   }
 
   private simplifyType(typeText: string): string {
@@ -633,8 +874,21 @@ class CantonApiGenerator {
     result = result.replace(/DA\.Types\./g, '');
     result = result.replace(/DA\.Internal\.Template\./g, '');
 
+    // Handle Daml.Finance.Interface paths with Lock, View, Factory, Holding (extract last component)
+    result = result.replace(/Daml\.Finance\.Interface\.[\w.]+\.(Lock|View|Factory|Holding|Hierarchy)/g, '$1');
+
     // Simplify underscore-separated module references (from TS imports)
     result = result.replace(/Daml_Finance_Interface_\w+_V\d+_\w+\./g, '');
+    
+    // Handle ContingentClaims namespace (used in structured products)
+    result = result.replace(/ContingentClaims\.Core\.[\w.]+\./g, '');
+    result = result.replace(/ContingentClaims\.[\w.]+\./g, '');
+    
+    // Handle remaining Daml namespace references
+    result = result.replace(/Daml\.[\w.]+\./g, '');
+    
+    // Handle GHC internal types
+    result = result.replace(/GHC\.[\w.]+\./g, '');
 
     // Replace damlTypes primitives
     result = result.replace(/damlTypes\.Party/g, 'Party');
@@ -647,14 +901,23 @@ class CantonApiGenerator {
     result = result.replace(/damlTypes\.Bool/g, 'Bool');
     result = result.replace(/damlTypes\.Optional/g, 'Optional');
 
+    // Handle damlTypes.Map to Record conversion
+    result = result.replace(/damlTypes\.Map<([^,]+),\s*([^>]+)>/g, 'Record<$1, $2>');
+
     // Simplify Map<string, Set<Party>> to Record<string, Party[]>
-    result = result.replace(/damlTypes\.Map<string,\s*DA\.Set\.Types\.Set<Party>>/g, 'Record<string, Party[]>');
-    result = result.replace(/damlTypes\.Map<string,\s*Set<Party>>/g, 'Record<string, Party[]>');
     result = result.replace(/Map<string,\s*DA\.Set\.Types\.Set<Party>>/g, 'Record<string, Party[]>');
+    result = result.replace(/Map<string,\s*Set<Party>>/g, 'Record<string, Party[]>');
 
     // Simplify Set<Party> to Party[]
     result = result.replace(/DA\.Set\.Types\.Set<Party>/g, 'Party[]');
     result = result.replace(/Set<Party>/g, 'Party[]');
+
+    // Handle Tuple2/Tuple3 in type positions (convert to TypeScript tuple syntax)
+    result = result.replace(/Tuple2<([^,]+),\s*([^>]+)>/g, '[$1, $2]');
+    result = result.replace(/Tuple3<([^,]+),\s*([^,]+),\s*([^>]+)>/g, '[$1, $2, $3]');
+
+    // Handle ContractId with unresolved/interface types (replace with unknown)
+    result = result.replace(/ContractId<(Factory|RouteProvider|Settler|Instructor|BatchFactory|InstructionFactory)>/g, 'ContractId<unknown>');
 
     // Handle Token type conflict (Token type vs Token namespace)
     // Only replace standalone "Token" that's a type (not "TokenFactory" etc.)
@@ -693,80 +956,27 @@ class CantonApiGenerator {
     return result;
   }
 
-  private extractDomain(modulePath: string): string {
-    const parts = modulePath.split('.');
-    // Extract meaningful domain name
-    if (parts.includes('Account')) return 'Account';
-    if (parts.includes('Holding')) return 'Holding';
-    if (parts.includes('Instrument')) return 'Instrument';
-    if (parts.includes('Settlement')) return 'Settlement';
-    if (parts.includes('Lifecycle')) return 'Lifecycle';
-    if (parts.includes('Workflow')) return 'Workflow';
-    return parts[parts.length - 1] || 'Other';
-  }
-
-  private createUniqueQualifiedName(templateId: string, modulePath: string, name: string, isWorkflow: boolean): string {
-    if (isWorkflow) {
-      // For workflows: Workflow_CreateAccount_Request
-      return `${modulePath.replace(/\./g, '_')}_${name}`;
-    }
-
-    // Parse templateId to extract unique path
-    // Format: "package:Module.Path:TemplateName"
-    // Example: "daml-finance-lifecycle-v4:Daml.Finance.Lifecycle.V4.Event.Distribution:Event"
-    const parts = templateId.split(':');
-    if (parts.length >= 3) {
-      const modulePathPart = parts[1]; // e.g., "Daml.Finance.Lifecycle.V4.Event.Distribution"
-      const pathParts = modulePathPart.split('.');
-      const domain = this.extractDomain(modulePath);
-
-      // Get the subpath after V4 (or similar version marker)
-      // For "Daml.Finance.Lifecycle.V4.Event.Distribution", extract "Event.Distribution"
-      const versionIndex = pathParts.findIndex(p => /^V\d+$/.test(p));
-      if (versionIndex !== -1 && versionIndex < pathParts.length - 1) {
-        const subPath = pathParts.slice(versionIndex + 1); // Include all parts after version
-        if (subPath.length > 1) {
-          // Multiple subpath parts - use them all for uniqueness
-          // e.g., Event.Distribution -> Event_Distribution_Event
-          return `${domain}_${subPath.join('_')}_${name}`;
-        }
-        // Single subpath part - just domain_name
-        return `${domain}_${name}`;
-      }
-
-      return `${domain}_${name}`;
-    }
-
-    return `${modulePath.replace(/\./g, '_')}_${name}`;
-  }
-
   private isFinanceInterface(name: string): boolean {
-    const coreInterfaces = [
-      'AccountKey', 'InstrumentKey', 'HoldingFactoryKey', 'Quantity', 'Id',
-      'Lock', 'Controllers', 'RoutedStep', 'Step', 'View', 'Hierarchy',
-      'InstructionKey', 'BusinessDayAdjustment', 'Period', 'Frequency',
-      'SchedulePeriod', 'PeriodicSchedule', 'DateOffset', 'HolidayCalendarData'
+    if (name.endsWith('Key') || name.endsWith('View')) {
+      return true;
+    }
+
+    const corePatterns = [
+      /^Id$/,
+      /^Lock$/,
+      /^Quantity$/,
+      /^Controllers?$/,
+      /Step$/,
+      /^Hierarchy$/,
+      /Adjustment$/,
+      /^Period$/,
+      /Schedule$/,
+      /Offset$/,
+      /Calendar/,
+      /^Frequency$/
     ];
-    return coreInterfaces.includes(name);
-  }
 
-  private getWorkflowDescription(modulePath: string): string {
-    const descriptions: Record<string, string> = {
-      'Workflow.CreateAccount': 'Request a new account from a custodian. The custodian can accept (creating the account) or decline.',
-      'Workflow.DvP': 'Delivery-vs-Payment atomic swap. Exchange two assets atomically between counterparties.',
-      'Workflow.Transfer': 'Request to transfer assets to another account. The asset owner must accept with the holding.',
-      'Workflow.CreditAccount': 'Request to credit (mint) assets into an account. Typically used by issuers.'
-    };
-    return descriptions[modulePath] || `${modulePath} workflow`;
-  }
-
-  private getChoiceDescription(choiceName: string): string {
-    const descriptions: Record<string, string> = {
-      'Accept': 'Accept the request/proposal and execute the workflow',
-      'Decline': 'Decline the request/proposal (counterparty action)',
-      'Withdraw': 'Withdraw the request/proposal (requester/proposer action)'
-    };
-    return descriptions[choiceName] || `Execute ${choiceName}`;
+    return corePatterns.some(pattern => pattern.test(name));
   }
 
   private generateCorePrimitives(): void {
@@ -1049,86 +1259,131 @@ LEDGER_TOKEN=
 
   private generateLedgerConfig(): void {
     const output = `// ledger/config.ts
-// Canton Ledger Configuration - Auto-loads from .env
+// Canton Ledger Configuration
 // DO NOT EDIT - Generated by generate-canton-api.ts
 
-import * as fs from 'fs';
-import * as path from 'path';
-
 // ═══════════════════════════════════════════════════════════════
-// ENV FILE LOADER
-// ═══════════════════════════════════════════════════════════════
-
-/**
- * Load environment variables from .env file.
- * Called automatically when this module is imported.
- */
-function loadEnv(): void {
-  // Try multiple possible locations for .env
-  const possiblePaths = [
-    path.resolve(__dirname, '..', '.env'),      // From ledger/ -> sdk root
-    path.resolve(process.cwd(), '.env'),         // Current working directory
-  ];
-
-  for (const envPath of possiblePaths) {
-    if (fs.existsSync(envPath)) {
-      const content = fs.readFileSync(envPath, 'utf-8');
-      for (const line of content.split('\\n')) {
-        const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith('#')) continue;
-        const eqIndex = trimmed.indexOf('=');
-        if (eqIndex === -1) continue;
-        const key = trimmed.slice(0, eqIndex);
-        const value = trimmed.slice(eqIndex + 1);
-        // Only set if not already set (env vars take precedence)
-        if (key && !process.env[key]) {
-          process.env[key] = value;
-        }
-      }
-      break; // Stop after first .env found
-    }
-  }
-}
-
-// Auto-load .env on module import
-loadEnv();
-
-// ═══════════════════════════════════════════════════════════════
-// CONFIGURATION
+// CONFIGURATION TYPES
 // ═══════════════════════════════════════════════════════════════
 
 /**
  * Canton ledger connection configuration.
- * Values are loaded from environment variables (via .env file or system env).
+ * Pass these values when creating a ledger client.
  */
-export const config = {
-  /** Ledger JSON API host */
-  ledgerHost: process.env.LEDGER_HOST || 'localhost',
+export interface LedgerConfig {
+  /** Ledger JSON API host (default: localhost) */
+  host: string;
+  /** Ledger JSON API port (default: 7575) */
+  port: number;
+  /** Full ledger URL (computed from host:port if not provided) */
+  ledgerUrl?: string;
+  /** Authentication token (optional - auto-generated if not provided) */
+  token?: string;
+  /** Request timeout in milliseconds (default: 30000) */
+  timeout?: number;
+  /** Ledger ID for JWT claims (default: sandbox) */
+  ledgerId?: string;
+  /** Application ID for JWT claims (default: vault-webapp) */
+  applicationId?: string;
+}
 
-  /** Ledger JSON API port */
-  ledgerPort: process.env.LEDGER_PORT || '7575',
+/**
+ * Create a ledger configuration with defaults.
+ */
+export function createConfig(options: Partial<LedgerConfig> = {}): LedgerConfig {
+  const host = options.host ?? 'localhost';
+  const port = options.port ?? 7575;
+  return {
+    host,
+    port,
+    ledgerUrl: options.ledgerUrl ?? \`http://\${host}:\${port}\`,
+    token: options.token,
+    timeout: options.timeout ?? 30000,
+    ledgerId: options.ledgerId ?? 'sandbox',
+    applicationId: options.applicationId ?? 'vault-webapp',
+  };
+}
 
-  /** JWT token for authentication (empty if not using auth) */
-  ledgerToken: process.env.LEDGER_TOKEN || '',
+/**
+ * Default configuration for local development.
+ */
+export const defaultConfig: LedgerConfig = createConfig();
 
-  /** Computed base URL for the JSON API */
-  get baseUrl(): string {
-    return \`http://\${this.ledgerHost}:\${this.ledgerPort}\`;
-  },
+/**
+ * Create config from environment variables (Node.js only).
+ * Use this in Node.js environments where process.env is available.
+ */
+export function createConfigFromEnv(): LedgerConfig {
+  const env = typeof process !== 'undefined' ? process.env : {};
+  return createConfig({
+    host: env.LEDGER_HOST || 'localhost',
+    port: parseInt(env.LEDGER_PORT || '7575', 10),
+    token: env.LEDGER_TOKEN,
+    timeout: env.LEDGER_TIMEOUT ? parseInt(env.LEDGER_TIMEOUT, 10) : undefined,
+    ledgerId: env.LEDGER_ID || 'sandbox',
+    applicationId: env.APPLICATION_ID || 'vault-webapp',
+  });
+}
 
-  /** HTTP headers for API requests */
-  get headers(): Record<string, string> {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-    if (this.ledgerToken) {
-      headers['Authorization'] = \`Bearer \${this.ledgerToken}\`;
-    }
-    return headers;
-  }
-};
+// ═══════════════════════════════════════════════════════════════
+// JWT AUTHENTICATION
+// ═══════════════════════════════════════════════════════════════
 
-export type LedgerConfig = typeof config;
+/**
+ * Options for JWT token generation.
+ */
+export interface JwtOptions {
+  /** Ledger ID - must match Canton config (default: "sandbox") */
+  ledgerId?: string;
+  /** Application identifier (default: "vault-webapp") */
+  applicationId?: string;
+  /** Token expiration in seconds (default: 86400 = 24h) */
+  expiresIn?: number;
+}
+
+/**
+ * Generate an unsigned JWT for Canton sandbox authentication.
+ * 
+ * Canton JSON API requires JWTs with Daml-specific claims under the
+ * "https://daml.com/ledger-api" namespace.
+ * 
+ * WARNING: This generates unsigned tokens suitable only for development.
+ * Production deployments require properly signed JWTs.
+ * 
+ * @param party - The party ID to act as (e.g., "Alice::1220abc...")
+ * @param options - JWT configuration options
+ * @returns JWT token string in format "header.payload." (trailing dot for empty signature)
+ * 
+ * @example
+ * const token = createJwtToken('Alice::1220abc123');
+ * // Use with ledger client
+ * const ledger = new CantonLedgerClient(party, { token });
+ */
+export function createJwtToken(party: string, options: JwtOptions = {}): string {
+  const header = { alg: 'none', typ: 'JWT' };
+  
+  const payload = {
+    'https://daml.com/ledger-api': {
+      ledgerId: options.ledgerId || 'sandbox',
+      actAs: [party],
+      readAs: [party],
+      applicationId: options.applicationId || 'vault-webapp',
+    },
+    exp: Math.floor(Date.now() / 1000) + (options.expiresIn || 86400),
+    iat: Math.floor(Date.now() / 1000),
+  };
+  
+  // Base64url encoding (NOT standard base64!)
+  // Must replace: = with nothing, + with -, / with _
+  const base64url = (obj: unknown): string => {
+    const json = JSON.stringify(obj);
+    const base64 = btoa(json);
+    return base64.replace(/=/g, '').replace(/\\\\+/g, '-').replace(/\\\\//g, '_');
+  };
+  
+  // Format: header.payload. (trailing dot = empty signature, required!)
+  return \`\${base64url(header)}.\${base64url(payload)}.\`;
+}
 `;
 
     const outputPath = path.join(this.outputDir, 'ledger', 'config.ts');
@@ -1142,7 +1397,9 @@ export type LedgerConfig = typeof config;
 // Canton JSON API Client
 // DO NOT EDIT - Generated by generate-canton-api.ts
 
-import { config } from './config';
+import type { LedgerConfig } from './config';
+import { createConfig, defaultConfig, createJwtToken } from './config';
+import { PackageResolver, getPackageResolver } from './resolver';
 import type {
   LedgerConnection,
   Contract,
@@ -1158,54 +1415,110 @@ import type {
 /**
  * Canton JSON API client implementing LedgerConnection interface.
  * Uses the standard Canton JSON API endpoints.
+ * 
+ * Features:
+ * - Automatic JWT token generation for Canton sandbox
+ * - Runtime package hash resolution for template IDs
+ * - Type-safe contract operations
  *
  * @example
  * \`\`\`ts
  * import { CantonLedgerClient } from './ledger';
  *
- * const ledger = new CantonLedgerClient('alice::1220...');
- * const accounts = await ledger.query(TemplateIds.Account_Account);
+ * // With explicit URL (auto-generates JWT, auto-resolves package hashes)
+ * const ledger = new CantonLedgerClient('alice::1220...', 'http://localhost:7575');
+ *
+ * // With config object
+ * const ledger = new CantonLedgerClient('alice::1220...', { host: 'localhost', port: 7575 });
+ * 
+ * // With custom token
+ * const ledger = new CantonLedgerClient('alice::1220...', { token: mySignedJwt });
  * \`\`\`
  */
 export class CantonLedgerClient implements LedgerConnection {
   private baseUrl: string;
   private headers: Record<string, string>;
   private party: Party;
+  private timeout: number;
+  private resolver: PackageResolver;
 
   /**
    * Create a new Canton ledger client.
    * @param party - The party identity to act as (required)
-   * @param baseUrl - Override the ledger URL (optional, defaults to config)
-   * @param token - Override the auth token (optional, defaults to config)
+   * @param urlOrConfig - Ledger URL string or LedgerConfig object
+   * @param token - Auth token (only used when urlOrConfig is a string). Auto-generated if not provided.
    */
-  constructor(party: Party, baseUrl?: string, token?: string) {
+  constructor(party: Party, urlOrConfig?: string | Partial<LedgerConfig>, token?: string) {
     if (!party) {
       throw new Error('Party is required to create a ledger client');
     }
     this.party = party;
-    this.baseUrl = baseUrl || config.baseUrl;
+
+    let resolvedUrl: string;
+    let resolvedToken: string | undefined;
+    let resolvedTimeout: number;
+    let ledgerId: string | undefined;
+    let applicationId: string | undefined;
+
+    if (typeof urlOrConfig === 'string') {
+      resolvedUrl = urlOrConfig;
+      resolvedToken = token;
+      resolvedTimeout = defaultConfig.timeout ?? 30000;
+    } else {
+      const config = { ...defaultConfig, ...urlOrConfig };
+      resolvedUrl = config.ledgerUrl ?? \`http://\${config.host}:\${config.port}\`;
+      resolvedToken = config.token;
+      resolvedTimeout = config.timeout ?? 30000;
+      ledgerId = config.ledgerId;
+      applicationId = config.applicationId;
+    }
+
+    this.baseUrl = resolvedUrl;
+    this.timeout = resolvedTimeout;
+    
+    // Auto-generate JWT if no token provided (required for Canton sandbox)
+    const authToken = resolvedToken || createJwtToken(party, { ledgerId, applicationId });
+    
     this.headers = {
       'Content-Type': 'application/json',
+      'Authorization': \`Bearer \${authToken}\`,
     };
-    if (token || config.ledgerToken) {
-      this.headers['Authorization'] = \`Bearer \${token || config.ledgerToken}\`;
-    }
+    
+    // Use shared package resolver for efficient caching across clients
+    this.resolver = getPackageResolver();
   }
 
   /** Get the party this client is acting as */
   getParty(): Party {
     return this.party;
   }
+  
+  /** Get the package resolver for advanced usage */
+  getResolver(): PackageResolver {
+    return this.resolver;
+  }
+
+  /**
+   * Resolve a template ID from package name format to package hash format.
+   * Called automatically by query, create, and exercise methods.
+   */
+  private async resolveTemplateId(templateId: string): Promise<string> {
+    return this.resolver.resolveTemplateId(templateId, this.baseUrl, this.headers);
+  }
 
   /**
    * Query contracts by template ID with optional filter.
+   * Template IDs are automatically resolved from package names to hashes.
    */
   async query<T>(templateId: string, filter?: Partial<T>): Promise<Contract<T>[]> {
+    // Resolve package name to hash
+    const resolvedTemplateId = await this.resolveTemplateId(templateId);
+    
     const response = await fetch(\`\${this.baseUrl}/v1/query\`, {
       method: 'POST',
       headers: this.headers,
       body: JSON.stringify({
-        templateIds: [templateId],
+        templateIds: [resolvedTemplateId],
         query: filter || {},
         readers: [this.party],
       }),
@@ -1226,13 +1539,17 @@ export class CantonLedgerClient implements LedgerConnection {
 
   /**
    * Create a new contract.
+   * Template IDs are automatically resolved from package names to hashes.
    */
   async create<T>(templateId: string, payload: T): Promise<ContractId<T>> {
+    // Resolve package name to hash
+    const resolvedTemplateId = await this.resolveTemplateId(templateId);
+    
     const response = await fetch(\`\${this.baseUrl}/v1/create\`, {
       method: 'POST',
       headers: this.headers,
       body: JSON.stringify({
-        templateId,
+        templateId: resolvedTemplateId,
         payload,
         meta: {
           actAs: [this.party],
@@ -1251,16 +1568,22 @@ export class CantonLedgerClient implements LedgerConnection {
 
   /**
    * Exercise a choice on a contract.
+   * Template IDs are automatically resolved from package names to hashes.
    */
   async exercise<T, R>(
+    templateId: string,
     contractId: ContractId<T>,
     choice: string,
     args: unknown
   ): Promise<ExerciseResult<R>> {
+    // Resolve package name to hash
+    const resolvedTemplateId = await this.resolveTemplateId(templateId);
+    
     const response = await fetch(\`\${this.baseUrl}/v1/exercise\`, {
       method: 'POST',
       headers: this.headers,
       body: JSON.stringify({
+        templateId: resolvedTemplateId,
         contractId,
         choice,
         argument: args,
@@ -1317,22 +1640,34 @@ export class CantonLedgerClient implements LedgerConnection {
 // ═══════════════════════════════════════════════════════════════
 
 /**
- * Create a ledger client using configuration from .env.
- * Convenience function for quick setup.
+ * Create a ledger client using configuration.
  * @param party - The party identity to act as (required)
+ * @param config - Optional configuration (defaults to localhost:7575)
  */
-export function createLedgerClient(party: Party): CantonLedgerClient {
-  return new CantonLedgerClient(party);
+export function createLedgerClient(party: Party, config?: Partial<LedgerConfig>): CantonLedgerClient {
+  const fullConfig = createConfig(config);
+  return new CantonLedgerClient(party, fullConfig.ledgerUrl, fullConfig.token);
 }
 
 /**
  * Check if the ledger is reachable.
+ * @param config - Configuration to use for the request
  */
-export async function isLedgerReachable(): Promise<boolean> {
+export async function isLedgerReachable(config?: Partial<LedgerConfig>): Promise<boolean> {
   try {
-    const response = await fetch(\`\${config.baseUrl}/v1/parties\`, {
+    const fullConfig = createConfig(config);
+    // Generate JWT if no token provided (required for Canton sandbox)
+    const token = fullConfig.token || createJwtToken('admin', {
+      ledgerId: fullConfig.ledgerId,
+      applicationId: fullConfig.applicationId,
+    });
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Authorization': \`Bearer \${token}\`,
+    };
+    const response = await fetch(\`\${fullConfig.ledgerUrl}/v1/parties\`, {
       method: 'GET',
-      headers: config.headers,
+      headers,
     });
     return response.ok;
   } catch {
@@ -1342,19 +1677,35 @@ export async function isLedgerReachable(): Promise<boolean> {
 
 /**
  * Get all parties from the ledger.
+ * @param config - Configuration to use for the request
  */
-export async function getParties(): Promise<Party[]> {
-  const response = await fetch(\`\${config.baseUrl}/v1/parties\`, {
+export async function getParties(config?: Partial<LedgerConfig>): Promise<Party[]> {
+  const fullConfig = createConfig(config);
+  // Generate JWT if no token provided (required for Canton sandbox)
+  const token = fullConfig.token || createJwtToken('admin', {
+    ledgerId: fullConfig.ledgerId,
+    applicationId: fullConfig.applicationId,
+  });
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'Authorization': \`Bearer \${token}\`,
+  };
+  const response = await fetch(\`\${fullConfig.ledgerUrl}/v1/parties\`, {
     method: 'GET',
-    headers: config.headers,
+    headers,
   });
 
   if (!response.ok) {
     throw new Error(\`Failed to get parties: \${response.status}\`);
   }
 
-  const data = await response.json() as { result?: Party[] };
-  return data.result || [];
+  // Canton returns objects with identifier, not plain strings
+  interface PartyInfo {
+    identifier: string;
+    isLocal?: boolean;
+  }
+  const data = await response.json() as { result?: PartyInfo[] };
+  return (data.result || []).map(p => p.identifier as Party);
 }
 
 /**
@@ -1363,6 +1714,50 @@ export async function getParties(): Promise<Party[]> {
 export function uniqueId(prefix: string = 'test'): string {
   return \`\${prefix}-\${Date.now()}-\${Math.random().toString(36).slice(2, 8)}\`;
 }
+
+/**
+ * Resolve a party name to its full party identifier.
+ *
+ * Canton party identifiers have the format "Name::1220abc...".
+ * This function takes a simple name like "Alice" and resolves it
+ * to the full identifier by querying the ledger.
+ *
+ * @param partyName - Simple party name (e.g., "Alice") or full identifier
+ * @param config - Optional ledger configuration
+ * @returns Full party identifier (e.g., "Alice::1220abc...")
+ * @throws Error if party is not found on the ledger
+ *
+ * @example
+ * \\\`\\\`\\\`ts
+ * // Resolve simple name to full identifier
+ * const alice = await resolveParty('Alice');
+ * // Returns: "Alice::1220cc28a614..."
+ *
+ * // Already a full identifier? Returns as-is
+ * const bob = await resolveParty('Bob::1220abc...');
+ * // Returns: "Bob::1220abc..."
+ * \\\`\\\`\\\`
+ */
+export async function resolveParty(partyName: string, config?: Partial<LedgerConfig>): Promise<Party> {
+  // If already a full identifier (contains ::), return as-is
+  if (partyName.includes('::')) {
+    return partyName as Party;
+  }
+
+  // Query all parties from the ledger
+  const allParties = await getParties(config);
+
+  // Find party that starts with the name
+  const match = allParties.find(p => p.startsWith(\\\`\\\${partyName}::\\\`));
+  if (!match) {
+    throw new Error(
+      \\\`Party '\\\${partyName}' not found on ledger. \\\` +
+      \\\`Available parties: \\\${allParties.join(', ')}\\\`
+    );
+  }
+
+  return match;
+}
 `;
 
     const outputPath = path.join(this.outputDir, 'ledger', 'client.ts');
@@ -1370,21 +1765,724 @@ export function uniqueId(prefix: string = 'test'): string {
     console.log(`   ✓ ledger/client.ts`);
   }
 
+  private generateLedgerErrors(): void {
+    const output = `// ledger/errors.ts
+// Typed error classes for ledger operations
+// DO NOT EDIT - Generated by generate-canton-api.ts
+
+export enum LedgerErrorCode {
+  CONNECTION_FAILED = 'CONNECTION_FAILED',
+  TIMEOUT = 'TIMEOUT',
+  UNAUTHORIZED = 'UNAUTHORIZED',
+  CONTRACT_NOT_FOUND = 'CONTRACT_NOT_FOUND',
+  EXERCISE_FAILED = 'EXERCISE_FAILED',
+  INVALID_ARGUMENT = 'INVALID_ARGUMENT',
+  NETWORK_ERROR = 'NETWORK_ERROR',
+}
+
+export class LedgerError extends Error {
+  constructor(
+    message: string,
+    public readonly code: LedgerErrorCode,
+    public readonly details?: unknown,
+    public readonly originalError?: Error
+  ) {
+    super(message);
+    this.name = 'LedgerError';
+  }
+
+  /** Convert ledger error to user-friendly message */
+  toUserFriendlyMessage(): string {
+    switch (this.code) {
+      case LedgerErrorCode.CONNECTION_FAILED:
+        return 'Unable to connect to ledger. Check connection settings.';
+      case LedgerErrorCode.TIMEOUT:
+        return 'Request timed out. Ledger may be slow or unavailable.';
+      case LedgerErrorCode.UNAUTHORIZED:
+        return 'Authentication failed. Check token or permissions.';
+      case LedgerErrorCode.CONTRACT_NOT_FOUND:
+        return \`Contract not found. It may have been archived or you lack visibility.\`;
+      case LedgerErrorCode.EXERCISE_FAILED:
+        return this.parseExerciseError() || 'Failed to execute choice. Check arguments and permissions.';
+      case LedgerErrorCode.INVALID_ARGUMENT:
+        return 'Invalid arguments provided. Check types and required fields.';
+      case LedgerErrorCode.NETWORK_ERROR:
+        return 'Network error. Check connectivity.';
+      default:
+        return this.message;
+    }
+  }
+
+  /** Parse Canton exercise error for meaningful context */
+  private parseExerciseError(): string | null {
+    const msg = this.message.toLowerCase();
+    if (msg.includes('authorization')) return 'Insufficient authorization. Missing signatory or controller.';
+    if (msg.includes('contract not active')) return 'Contract is archived or locked.';
+    if (msg.includes('missing field')) return 'Required field missing in arguments.';
+    if (msg.includes('type mismatch')) return 'Argument type mismatch. Check value types.';
+    if (msg.includes('precondition failed')) return 'Choice precondition not met. Check contract state.';
+    return null;
+  }
+}
+
+export class ConnectionError extends LedgerError {
+  constructor(message: string, details?: unknown) {
+    super(message, LedgerErrorCode.CONNECTION_FAILED, details);
+    this.name = 'ConnectionError';
+  }
+}
+
+export class TimeoutError extends LedgerError {
+  constructor(message: string = 'Request timed out', details?: unknown) {
+    super(message, LedgerErrorCode.TIMEOUT, details);
+    this.name = 'TimeoutError';
+  }
+}
+
+export class UnauthorizedError extends LedgerError {
+  constructor(message: string = 'Unauthorized', details?: unknown) {
+    super(message, LedgerErrorCode.UNAUTHORIZED, details);
+    this.name = 'UnauthorizedError';
+  }
+}
+
+export class ContractNotFoundError extends LedgerError {
+  constructor(contractId: string) {
+    super(\`Contract not found: \${contractId}\`, LedgerErrorCode.CONTRACT_NOT_FOUND, { contractId });
+    this.name = 'ContractNotFoundError';
+  }
+}
+
+export class ExerciseError extends LedgerError {
+  constructor(message: string, details?: unknown) {
+    super(message, LedgerErrorCode.EXERCISE_FAILED, details);
+    this.name = 'ExerciseError';
+  }
+}
+
+export function isLedgerError(error: unknown): error is LedgerError {
+  return error instanceof LedgerError;
+}
+
+export function isRetryable(error: unknown): boolean {
+  if (!isLedgerError(error)) return false;
+  return [
+    LedgerErrorCode.CONNECTION_FAILED,
+    LedgerErrorCode.TIMEOUT,
+    LedgerErrorCode.NETWORK_ERROR,
+  ].includes(error.code);
+}
+`;
+    const outputPath = path.join(this.outputDir, 'ledger', 'errors.ts');
+    fs.writeFileSync(outputPath, output);
+    console.log(`   ✓ ledger/errors.ts`);
+  }
+
+  private generateLedgerRetry(): void {
+    const output = `// ledger/retry.ts
+// Retry and backoff utilities for ledger operations
+// DO NOT EDIT - Generated by generate-canton-api.ts
+
+import { isRetryable, LedgerError } from './errors';
+
+export interface RetryOptions {
+  maxAttempts: number;
+  baseDelayMs: number;
+  maxDelayMs: number;
+  retryOn?: (error: Error) => boolean;
+}
+
+const DEFAULT_OPTIONS: RetryOptions = {
+  maxAttempts: 3,
+  baseDelayMs: 1000,
+  maxDelayMs: 10000,
+};
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function calculateDelay(attempt: number, options: RetryOptions): number {
+  const delay = options.baseDelayMs * Math.pow(2, attempt - 1);
+  const jitter = Math.random() * 0.1 * delay;
+  return Math.min(delay + jitter, options.maxDelayMs);
+}
+
+export async function withRetry<T>(
+  fn: () => Promise<T>,
+  options: Partial<RetryOptions> = {}
+): Promise<T> {
+  const opts = { ...DEFAULT_OPTIONS, ...options };
+  let lastError: Error | undefined;
+
+  for (let attempt = 1; attempt <= opts.maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+
+      const shouldRetry = opts.retryOn
+        ? opts.retryOn(lastError)
+        : isRetryable(lastError);
+
+      if (!shouldRetry || attempt === opts.maxAttempts) {
+        throw lastError;
+      }
+
+      const delay = calculateDelay(attempt, opts);
+      await sleep(delay);
+    }
+  }
+
+  throw lastError;
+}
+
+export function createRetryableClient<T extends object>(
+  client: T,
+  options: Partial<RetryOptions> = {}
+): T {
+  return new Proxy(client, {
+    get(target, prop) {
+      const value = (target as Record<string | symbol, unknown>)[prop];
+      if (typeof value === 'function') {
+        return (...args: unknown[]) => withRetry(() => value.apply(target, args), options);
+      }
+      return value;
+    },
+  });
+}
+`;
+    const outputPath = path.join(this.outputDir, 'ledger', 'retry.ts');
+    fs.writeFileSync(outputPath, output);
+    console.log(`   ✓ ledger/retry.ts`);
+  }
+
+  private generateLedgerStreaming(): void {
+    const output = `// ledger/streaming.ts
+// SSE streaming client for Canton JSON API
+// DO NOT EDIT - Generated by generate-canton-api.ts
+
+export interface ContractEvent {
+  type: 'created' | 'archived';
+  contractId: string;
+  templateId: string;
+  payload?: unknown;
+  offset?: string;
+}
+
+export interface StreamOptions {
+  templateIds: string[];
+  filter?: Record<string, unknown>;
+  onContract: (event: ContractEvent) => void;
+  onError?: (error: Error) => void;
+  onEnd?: () => void;
+}
+
+export class LedgerStream {
+  private eventSource: EventSource | null = null;
+  private _isConnected = false;
+
+  get isConnected(): boolean {
+    return this._isConnected;
+  }
+
+  connect(baseUrl: string, token: string | undefined, party: string, options: StreamOptions): void {
+    if (this.eventSource) {
+      this.disconnect();
+    }
+
+    const params = new URLSearchParams({
+      templateIds: options.templateIds.join(','),
+    });
+    if (options.filter) {
+      params.set('query', JSON.stringify(options.filter));
+    }
+
+    const url = \`\${baseUrl}/v1/stream/query?\${params.toString()}\`;
+
+    this.eventSource = new EventSource(url, {
+      withCredentials: !!token,
+    });
+
+    this.eventSource.onopen = () => {
+      this._isConnected = true;
+    };
+
+    this.eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.events) {
+          for (const e of data.events) {
+            if (e.created) {
+              options.onContract({
+                type: 'created',
+                contractId: e.created.contractId,
+                templateId: e.created.templateId,
+                payload: e.created.payload,
+                offset: data.offset,
+              });
+            } else if (e.archived) {
+              options.onContract({
+                type: 'archived',
+                contractId: e.archived.contractId,
+                templateId: e.archived.templateId,
+                offset: data.offset,
+              });
+            }
+          }
+        }
+      } catch (err) {
+        options.onError?.(err instanceof Error ? err : new Error(String(err)));
+      }
+    };
+
+    this.eventSource.onerror = (err) => {
+      this._isConnected = false;
+      options.onError?.(new Error('Stream connection error'));
+    };
+  }
+
+  disconnect(): void {
+    if (this.eventSource) {
+      this.eventSource.close();
+      this.eventSource = null;
+      this._isConnected = false;
+    }
+  }
+}
+
+export function createContractStream(): LedgerStream {
+  return new LedgerStream();
+}
+`;
+    const outputPath = path.join(this.outputDir, 'ledger', 'streaming.ts');
+    fs.writeFileSync(outputPath, output);
+    console.log(`   ✓ ledger/streaming.ts`);
+  }
+
+  private generateLedgerResolver(): void {
+    const output = `// ledger/resolver.ts
+// Runtime package hash resolution for Canton template IDs
+// DO NOT EDIT - Generated by generate-canton-api.ts
+
+/**
+ * PackageResolver handles runtime resolution of template IDs from package names to package hashes.
+ * 
+ * Canton JSON API requires template IDs in the format:
+ *   \\\`<64-char-package-hash>:<Module.Path>:<TemplateName>\\\`
+ * 
+ * But the generated SDK uses package names for readability:
+ *   \\\`<package-name>:<Module.Path>:<TemplateName>\\\`
+ * 
+ * This class resolves package names to their hashes at runtime by:
+ * 1. Fetching all package hashes from /v1/packages
+ * 2. Testing each hash against known templates via /v1/query
+ * 3. Caching successful mappings for the session
+ * 
+ * @example
+ * const resolver = new PackageResolver();
+ * await resolver.initialize(ledgerUrl, headers);
+ * const resolvedId = await resolver.resolveTemplateId(
+ *   'vault:Vault.Config:VaultConfig',
+ *   ledgerUrl,
+ *   headers
+ * );
+ * // Returns: '1af92803cb886bb01871a1049c808199feb933b4eebd2253585af52a386e1f32:Vault.Config:VaultConfig'
+ */
+export class PackageResolver {
+  /** Cache mapping package names to their hashes */
+  private packageCache = new Map<string, string>();
+  
+  /** All available package hashes from the ledger */
+  private packageHashes: string[] = [];
+  
+  /** Whether the resolver has been initialized */
+  private initialized = false;
+  
+  /** Pending initialization promise to prevent duplicate init calls */
+  private initPromise: Promise<void> | null = null;
+
+  /**
+   * Check if a template ID is already a resolved hash (64-char hex).
+   */
+  private isResolvedHash(packagePart: string): boolean {
+    return /^[a-f0-9]{64}$/i.test(packagePart);
+  }
+
+  /**
+   * Initialize the resolver by fetching all package hashes from the ledger.
+   * Safe to call multiple times - only fetches once.
+   */
+  async initialize(baseUrl: string, headers: Record<string, string>): Promise<void> {
+    if (this.initialized) return;
+    
+    // Prevent duplicate initialization
+    if (this.initPromise) {
+      return this.initPromise;
+    }
+    
+    this.initPromise = this.doInitialize(baseUrl, headers);
+    return this.initPromise;
+  }
+  
+  private async doInitialize(baseUrl: string, headers: Record<string, string>): Promise<void> {
+    try {
+      const response = await fetch(\`\${baseUrl}/v1/packages\`, {
+        method: 'GET',
+        headers,
+      });
+      
+      if (!response.ok) {
+        console.warn(\`PackageResolver: Failed to fetch packages: \${response.status}\`);
+        return;
+      }
+      
+      const data = await response.json() as { result?: string[] };
+      this.packageHashes = data.result || [];
+      this.initialized = true;
+      
+      console.log(\`PackageResolver: Loaded \${this.packageHashes.length} package hashes\`);
+    } catch (error) {
+      console.warn(\`PackageResolver: Initialization failed:\`, error);
+    }
+  }
+
+  /**
+   * Resolve a template ID from package name format to package hash format.
+   * 
+   * @param templateId - Template ID in format "packageName:Module.Path:TemplateName"
+   * @param baseUrl - Ledger base URL
+   * @param headers - Request headers (including auth)
+   * @returns Resolved template ID with package hash
+   * @throws Error if package cannot be resolved
+   */
+  async resolveTemplateId(
+    templateId: string,
+    baseUrl: string,
+    headers: Record<string, string>
+  ): Promise<string> {
+    // Parse the template ID
+    const parts = templateId.split(':');
+    if (parts.length !== 3) {
+      throw new Error(\`Invalid template ID format: \${templateId}. Expected "package:Module.Path:TemplateName"\`);
+    }
+    
+    const [packageName, modulePath, templateName] = parts;
+    
+    // If already a hash, return as-is
+    if (this.isResolvedHash(packageName)) {
+      return templateId;
+    }
+    
+    // Check cache first
+    const cachedHash = this.packageCache.get(packageName);
+    if (cachedHash) {
+      return \`\${cachedHash}:\${modulePath}:\${templateName}\`;
+    }
+    
+    // Ensure we have package hashes
+    if (!this.initialized) {
+      await this.initialize(baseUrl, headers);
+    }
+    
+    if (this.packageHashes.length === 0) {
+      throw new Error(\`PackageResolver: No packages available. Is the ledger running?\`);
+    }
+    
+    // Try each hash until we find one that works for this template
+    for (const hash of this.packageHashes) {
+      const testId = \`\${hash}:\${modulePath}:\${templateName}\`;
+      
+      try {
+        const response = await fetch(\`\${baseUrl}/v1/query\`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            templateIds: [testId],
+            query: {},
+          }),
+        });
+        
+        // 200 means the template exists in this package
+        if (response.ok) {
+          // Cache the mapping for future use
+          this.packageCache.set(packageName, hash);
+          console.log(\`PackageResolver: Resolved "\${packageName}" -> "\${hash.substring(0, 8)}..."\`);
+          return testId;
+        }
+        
+        // 400 with unknownTemplateIds means wrong package, try next
+        // Other errors might be transient, continue trying
+      } catch {
+        // Network error, continue to next hash
+      }
+    }
+    
+    throw new Error(
+      \`PackageResolver: Could not resolve package "\${packageName}" for template "\${modulePath}:\${templateName}". \` +
+      \`Tried \${this.packageHashes.length} packages. Ensure the DAR is deployed to the ledger.\`
+    );
+  }
+
+  /**
+   * Resolve multiple template IDs in batch.
+   * More efficient than resolving one at a time as it reuses cached mappings.
+   */
+  async resolveTemplateIds(
+    templateIds: string[],
+    baseUrl: string,
+    headers: Record<string, string>
+  ): Promise<string[]> {
+    return Promise.all(
+      templateIds.map(id => this.resolveTemplateId(id, baseUrl, headers))
+    );
+  }
+
+  /**
+   * Clear the package cache. Useful if packages have been updated on the ledger.
+   */
+  clearCache(): void {
+    this.packageCache.clear();
+    this.packageHashes = [];
+    this.initialized = false;
+    this.initPromise = null;
+  }
+
+  /**
+   * Get the current cache state for debugging.
+   */
+  getCacheState(): { initialized: boolean; packageCount: number; cachedMappings: number } {
+    return {
+      initialized: this.initialized,
+      packageCount: this.packageHashes.length,
+      cachedMappings: this.packageCache.size,
+    };
+  }
+}
+
+/** Singleton resolver instance for convenience */
+let globalResolver: PackageResolver | null = null;
+
+/**
+ * Get the global PackageResolver instance.
+ * Creates one if it doesn't exist.
+ */
+export function getPackageResolver(): PackageResolver {
+  if (!globalResolver) {
+    globalResolver = new PackageResolver();
+  }
+  return globalResolver;
+}
+
+/**
+ * Create a new PackageResolver instance.
+ * Use this if you need isolated resolution (e.g., multiple ledgers).
+ */
+export function createPackageResolver(): PackageResolver {
+  return new PackageResolver();
+}
+`;
+    const outputPath = path.join(this.outputDir, 'ledger', 'resolver.ts');
+    fs.writeFileSync(outputPath, output);
+    console.log(`   ✓ ledger/resolver.ts`);
+  }
+
+  private generateUtils(): void {
+    const utilsDir = path.join(this.outputDir, 'utils');
+    fs.mkdirSync(utilsDir, { recursive: true });
+
+    this.generateUtilsAmounts();
+    this.generateUtilsIds();
+    this.generateUtilsDatetime();
+    this.generateUtilsIndex();
+  }
+
+  private generateUtilsAmounts(): void {
+    const output = `// utils/amounts.ts
+// Amount utilities for financial calculations
+// DO NOT EDIT - Generated by generate-canton-api.ts
+
+import type { Numeric } from '../core/primitives';
+
+export function normalizeAmount(value: string | number): Numeric {
+  if (typeof value === 'number') {
+    return value.toString();
+  }
+  return value.replace(/,/g, '');
+}
+
+export function formatAmount(value: Numeric, decimals: number = 2): string {
+  const num = parseFloat(value);
+  return num.toLocaleString(undefined, {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+}
+
+export function addAmounts(a: Numeric, b: Numeric): Numeric {
+  const numA = parseFloat(a);
+  const numB = parseFloat(b);
+  return (numA + numB).toString();
+}
+
+export function subtractAmounts(a: Numeric, b: Numeric): Numeric {
+  const numA = parseFloat(a);
+  const numB = parseFloat(b);
+  return (numA - numB).toString();
+}
+
+export function isValidAmount(value: string): boolean {
+  const num = parseFloat(value);
+  return !isNaN(num) && isFinite(num);
+}
+
+export function compareAmounts(a: Numeric, b: Numeric): number {
+  const numA = parseFloat(a);
+  const numB = parseFloat(b);
+  return numA - numB;
+}
+`;
+    const outputPath = path.join(this.outputDir, 'utils', 'amounts.ts');
+    fs.writeFileSync(outputPath, output);
+    console.log(`   ✓ utils/amounts.ts`);
+  }
+
+  private generateUtilsIds(): void {
+    const output = `// utils/ids.ts
+// ID and key creation utilities
+// DO NOT EDIT - Generated by generate-canton-api.ts
+
+import type { Party } from '../core/primitives';
+import type { Id, AccountKey, InstrumentKey, HoldingFactoryKey } from '../core/interfaces';
+
+export function createId(value: string): Id {
+  return { unpack: value };
+}
+
+export function createAccountKey(custodian: Party, owner: Party, id: string): AccountKey {
+  return { custodian, owner, id: createId(id) };
+}
+
+export function createInstrumentKey(
+  depository: Party,
+  issuer: Party,
+  id: string,
+  version: string = '1'
+): InstrumentKey {
+  return {
+    depository,
+    issuer,
+    id: createId(id),
+    version,
+    holdingStandard: { tag: 'TransferableFungible' },
+  };
+}
+
+export function createHoldingFactoryKey(provider: Party, id: string): HoldingFactoryKey {
+  return { provider, id: createId(id) };
+}
+
+export function idToString(id: Id): string {
+  return id.unpack;
+}
+
+export function generateUniqueId(prefix: string = 'id'): string {
+  return \`\${prefix}-\${Date.now()}-\${Math.random().toString(36).slice(2, 8)}\`;
+}
+`;
+    const outputPath = path.join(this.outputDir, 'utils', 'ids.ts');
+    fs.writeFileSync(outputPath, output);
+    console.log(`   ✓ utils/ids.ts`);
+  }
+
+  private generateUtilsDatetime(): void {
+    const output = `// utils/datetime.ts
+// Date and time utilities for Canton
+// DO NOT EDIT - Generated by generate-canton-api.ts
+
+import type { Time } from '../core/primitives';
+
+export function toCantonTime(date: Date): Time {
+  return date.toISOString();
+}
+
+export function fromCantonTime(time: Time): Date {
+  return new Date(time);
+}
+
+export function formatDate(time: Time, options?: Intl.DateTimeFormatOptions): string {
+  const date = fromCantonTime(time);
+  return date.toLocaleDateString(undefined, options);
+}
+
+export function formatDateTime(time: Time): string {
+  const date = fromCantonTime(time);
+  return date.toLocaleString();
+}
+
+export function nowAsCantonTime(): Time {
+  return toCantonTime(new Date());
+}
+`;
+    const outputPath = path.join(this.outputDir, 'utils', 'datetime.ts');
+    fs.writeFileSync(outputPath, output);
+    console.log(`   ✓ utils/datetime.ts`);
+  }
+
+  private generateUtilsIndex(): void {
+    const output = `// utils/index.ts
+// Re-exports all utilities
+// DO NOT EDIT - Generated by generate-canton-api.ts
+
+export * from './amounts';
+export * from './ids';
+export * from './datetime';
+`;
+    const outputPath = path.join(this.outputDir, 'utils', 'index.ts');
+    fs.writeFileSync(outputPath, output);
+    console.log(`   ✓ utils/index.ts`);
+  }
+
   private generateLedgerIndex(): void {
     const output = `// ledger/index.ts
 // Re-exports all ledger utilities
 // DO NOT EDIT - Generated by generate-canton-api.ts
 
-export { config } from './config';
-export type { LedgerConfig } from './config';
+export { createConfig, createConfigFromEnv, createJwtToken } from './config';
+export type { LedgerConfig, JwtOptions } from './config';
 
 export {
   CantonLedgerClient,
   createLedgerClient,
   isLedgerReachable,
   getParties,
+  resolveParty,
   uniqueId,
 } from './client';
+
+export {
+  LedgerError,
+  LedgerErrorCode,
+  ConnectionError,
+  TimeoutError,
+  UnauthorizedError,
+  ContractNotFoundError,
+  ExerciseError,
+  isLedgerError,
+  isRetryable,
+} from './errors';
+
+export { withRetry, createRetryableClient } from './retry';
+export type { RetryOptions } from './retry';
+
+export { LedgerStream, createContractStream } from './streaming';
+export type { ContractEvent, StreamOptions } from './streaming';
+
+export {
+  PackageResolver,
+  getPackageResolver,
+  createPackageResolver,
+} from './resolver';
 `;
 
     const outputPath = path.join(this.outputDir, 'ledger', 'index.ts');
@@ -1422,41 +2520,29 @@ import {
 export const TemplateIds = {
 `;
 
-    // Add all template IDs
-    for (const module of this.modules) {
-      output += `  ${module.qualifiedName}: '${module.templateId}',\n`;
+    for (const template of this.templates) {
+      output += `  ${template.qualifiedName}: '${template.templateId}',\n`;
     }
     output += `} as const;\n\n`;
 
-    // Add workflows section
     output += `// ═══════════════════════════════════════════════════════════════
-// WORKFLOWS
+// TEMPLATE NAMESPACES
 // ═══════════════════════════════════════════════════════════════
-// Each workflow follows a request/response pattern:
-// 1. Requester creates a Request/Proposal contract
-// 2. Counterparty can Accept, Decline, or the requester can Withdraw
-//
-// Usage:
-//   const cmd = CreateAccount.request({ custodian, owner });
-//   await ledger.create(cmd.templateId, cmd.argument);
+// Each template gets a namespace with:
+// - Payload interface (the template fields)
+// - create() function to create the contract
+// - One function per choice (except Archive)
 // ═══════════════════════════════════════════════════════════════
 
 `;
 
-    // Generate CreateAccount workflow
-    output += this.generateCreateAccountWorkflow();
+    // Generate namespace for ALL templates
+    for (const template of this.templates) {
+      output += this.generateTemplateNamespace(template);
+    }
 
-    // Generate Transfer workflow
-    output += this.generateTransferWorkflow();
-
-    // Generate CreditAccount workflow
-    output += this.generateCreditAccountWorkflow();
-
-    // Generate DvP workflow
-    output += this.generateDvPWorkflow();
-
-    // Generate Factories namespace
-    output += this.generateFactoriesNamespace();
+    output += this.generateQueryNamespace();
+    output += this.generateTypeGuardsNamespace();
 
     // Add helper types
     output += `
@@ -1592,415 +2678,464 @@ export interface HoldingFactoryView {
   provider: Party;
   id: Id;
 }
+
+// ═══════════════════════════════════════════════════════════════
+// MOCK FACTORIES (for testing)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * Factory functions for creating mock data in tests.
+ * Use these to quickly generate valid test data.
+ */
+export const MockFactories = {
+  /**
+   * Generate a mock party identifier
+   * @example MockFactories.party('alice') // 'alice::1220abc123'
+   */
+  party: (name: string = 'test'): Party => {
+    const randomHex = () => Math.random().toString(16).substring(2, 10);
+    return \`\${name}::1220\${randomHex()}\` as Party;
+  },
+
+  /**
+   * Generate a mock ID
+   * @example MockFactories.id('account') // { unpack: 'account-1234567890' }
+   */
+  id: (prefix: string = 'id'): Id => ({
+    unpack: \`\${prefix}-\${Date.now()}\`
+  }),
+
+  /**
+   * Generate a mock AccountKey
+   * @example MockFactories.accountKey(custodian, owner, 'acc-1')
+   */
+  accountKey: (custodian: Party, owner: Party, id?: string): AccountKey => ({
+    custodian,
+    owner,
+    id: id ? { unpack: id } : MockFactories.id('account')
+  }),
+
+  /**
+   * Generate a mock InstrumentKey
+   * @example MockFactories.instrumentKey(depository, issuer, 'USD')
+   */
+  instrumentKey: (
+    depository: Party,
+    issuer: Party,
+    id: string = 'USD',
+    version: string = '1'
+  ): InstrumentKey => ({
+    depository,
+    issuer,
+    id: { unpack: id },
+    version,
+    holdingStandard: { tag: 'TransferableFungible' }
+  }),
+
+  /**
+   * Generate a mock HoldingFactoryKey
+   * @example MockFactories.holdingFactoryKey(provider, 'factory-1')
+   */
+  holdingFactoryKey: (provider: Party, id?: string): HoldingFactoryKey => ({
+    provider,
+    id: id ? { unpack: id } : MockFactories.id('factory')
+  }),
+
+  /**
+   * Generate a mock Quantity
+   * @example MockFactories.quantity(instrumentKey, '1000.0')
+   */
+  quantity: (instrument: InstrumentKey, amount: string = '100.0'): Quantity => ({
+    unit: instrument,
+    amount: amount as Numeric
+  }),
+
+  /**
+   * Generate a mock Controllers
+   * @example MockFactories.controllers(owner, custodian)
+   */
+  controllers: (outgoing: Party[], incoming: Party[]): Controllers => ({
+    outgoing,
+    incoming
+  })
+};
 `;
 
     return output;
   }
 
-  private generateFactoriesNamespace(): string {
-    if (this.factories.length === 0) {
-      return '';
-    }
+  /**
+   * Generate a unified namespace for any template.
+   * All templates get the same structure: Payload interface + create() + choice functions.
+   */
+  private generateTemplateNamespace(template: TemplateIR): string {
+    const namespaceName = template.qualifiedName;
+    const templateIdKey = template.qualifiedName;
 
-    let output = `
-// ═══════════════════════════════════════════════════════════════
-// FACTORIES
-// ═══════════════════════════════════════════════════════════════
-// Factory templates for creating accounts, holdings, and instruments.
-// These are the infrastructure contracts needed before using workflows.
-//
-// Usage:
-//   // 1. Create the factory
-//   const factoryCid = await ledger.create(Factories.Account.templateId, {
-//     provider: vault,
-//     observers: {}
-//   });
-//
-//   // 2. Use the factory interface to create resources
-//   await ledger.exercise(factoryCid, Factories.Account.choices.Create, {
-//     account: accountKey,
-//     holdingFactory: holdingFactoryKey,
-//     controllers: { outgoing: [], incoming: [] },
-//     description: 'My Account',
-//     observers: {}
-//   });
-// ═══════════════════════════════════════════════════════════════
+    // Build example for documentation
+    const exampleFields = template.fields.slice(0, 3).map(f => {
+      if (f.type.includes('Party')) return `${f.name}: 'alice::1220...'`;
+      if (f.type.includes('Id')) return `${f.name}: { unpack: 'id-1' }`;
+      if (f.type.includes('string')) return `${f.name}: 'example'`;
+      if (f.type.includes('Numeric')) return `${f.name}: '100.0'`;
+      return `${f.name}: {...}`;
+    }).join(', ');
 
+    // Filter out Archive choice
+    const meaningfulChoices = template.choices.filter(c => c.name !== 'Archive');
+
+    let output = `/**
+ * ${namespaceName}
+ * Role: ${template.role}
+ * Template ID: ${template.templateId}
+ * Choices: ${meaningfulChoices.length > 0 ? meaningfulChoices.map(c => c.name).join(', ') : 'none'}
+ *
+ * @example
+ * const cmd = ${namespaceName}.create({ ${exampleFields} });
+ * const contractId = await ledger.create(cmd.templateId, cmd.argument);
+ */
+export namespace ${namespaceName} {
+
+  /** Template payload fields */
+  export interface Payload {
 `;
 
-    // Generate the Factories namespace
-    output += `export namespace Factories {\n\n`;
+    for (const field of template.fields) {
+      output += `    ${field.name}: ${field.type};\n`;
+    }
+    output += `  }\n\n`;
 
-    for (const factory of this.factories) {
-      output += this.generateSingleFactory(factory);
+    // Create function - always the same
+    output += `  /** Create a new ${template.name} contract */
+  export function create(payload: Payload): Command<Payload> {
+    return {
+      templateId: TemplateIds.${templateIdKey},
+      argument: payload
+    };
+  }\n`;
+
+    // Generate a function for each choice (except Archive)
+    for (const choice of meaningfulChoices) {
+      const fnName = this.toChoiceFunctionName(choice.name);
+      const hasArgs = choice.params && choice.params.length > 0;
+      const returnType = sanitizeReturnType(choice.returnType);
+
+      if (hasArgs) {
+        output += `
+  /** Exercise ${choice.name} choice */
+  export function ${fnName}(
+    contractId: ContractId<Payload>,
+    args: { ${choice.params.map(p => `${p.name}: ${p.type}`).join('; ')} }
+  ): Command<${returnType}> {
+    return {
+      templateId: TemplateIds.${templateIdKey},
+      choice: '${choice.name}',
+      contractId: contractId as string,
+      argument: args
+    };
+  }\n`;
+      } else {
+        output += `
+  /** Exercise ${choice.name} choice */
+  export function ${fnName}(contractId: ContractId<Payload>): Command<${returnType}> {
+    return {
+      templateId: TemplateIds.${templateIdKey},
+      choice: '${choice.name}',
+      contractId: contractId as string,
+      argument: {}
+    };
+  }\n`;
+      }
     }
 
     output += `}\n\n`;
-
     return output;
   }
 
-  private generateSingleFactory(factory: FactoryTemplate): string {
-    let output = '';
+  /**
+   * Convert choice name to a valid function name.
+   * E.g., "Accept" -> "accept", "ProcessDeposit" -> "processDeposit"
+   */
+  private toChoiceFunctionName(choiceName: string): string {
+    return choiceName.charAt(0).toLowerCase() + choiceName.slice(1);
+  }
 
-    // Factory namespace comment
-    output += `  /**\n`;
-    output += `   * ${factory.name} Factory\n`;
-    output += `   * Domain: ${factory.domain}\n`;
-    if (factory.interfaceChoices.length > 0) {
-      output += `   * Choices: ${factory.interfaceChoices.map(c => c.name).join(', ')}\n`;
+  private generatePackageJson(): void {
+    const packageJson = {
+      name: `${this.projectName}-sdk`,
+      version: '0.1.0',
+      type: 'module',
+      main: `./${this.projectName}-api.ts`,
+      types: `./${this.projectName}-api.ts`,
+      exports: {
+        '.': `./${this.projectName}-api.ts`,
+        './core': './core/index.ts',
+        './ledger': './ledger/index.ts',
+        './utils': './utils/index.ts',
+        './react': './react/index.ts',
+      },
+      peerDependencies: {
+        'react': '^18.0.0 || ^19.0.0',
+        '@tanstack/react-query': '^5.0.0',
+      },
+      peerDependenciesMeta: {
+        'react': { optional: true },
+        '@tanstack/react-query': { optional: true },
+      },
+    };
+
+    const outputPath = path.join(this.outputDir, 'package.json');
+    if (!fs.existsSync(outputPath)) {
+      fs.writeFileSync(outputPath, JSON.stringify(packageJson, null, 2) + '\n');
+      console.log(`   ✓ package.json`);
+    } else {
+      console.log(`   ⏭ package.json (already exists)`);
     }
-    output += `   */\n`;
+  }
 
-    output += `  export namespace ${factory.name} {\n`;
+  private generateTsConfig(): void {
+    const tsconfig = {
+      compilerOptions: {
+        target: 'ES2020',
+        module: 'ESNext',
+        moduleResolution: 'bundler',
+        strict: true,
+        esModuleInterop: true,
+        skipLibCheck: true,
+        declaration: true,
+        outDir: './dist',
+        resolveJsonModule: true,
+        allowSyntheticDefaultImports: true,
+        forceConsistentCasingInFileNames: true,
+        jsx: 'react-jsx',
+      },
+      include: [
+        '*.ts',
+        'core/**/*.ts',
+        'ledger/**/*.ts',
+        'utils/**/*.ts',
+        'react/**/*.ts',
+        'react/**/*.tsx',
+      ],
+      exclude: ['node_modules', 'dist'],
+    };
 
-    // Template ID
-    output += `    /** Template ID for creating the factory */\n`;
-    output += `    export const templateId = '${factory.templateId}';\n\n`;
+    const outputPath = path.join(this.outputDir, 'tsconfig.json');
+    if (!fs.existsSync(outputPath)) {
+      fs.writeFileSync(outputPath, JSON.stringify(tsconfig, null, 2) + '\n');
+      console.log(`   ✓ tsconfig.json`);
+    } else {
+      console.log(`   ⏭ tsconfig.json (already exists)`);
+    }
+  }
 
-    // Interface ID (for exercising choices)
-    if (factory.interfaceId) {
-      output += `    /** Interface ID for exercising factory choices */\n`;
-      output += `    export const interfaceId = '${factory.interfaceId}';\n\n`;
+  private generateQueryNamespace(): string {
+    let output = `// ═══════════════════════════════════════════════════════════════
+// QUERY HELPERS
+// ═══════════════════════════════════════════════════════════════
+// Typed query helpers for each template
+
+export namespace Query {
+  export interface QuerySpec<T> {
+    templateId: string;
+    filter: Partial<T>;
+  }
+
+`;
+
+    // Generate a query function for ALL templates
+    for (const template of this.templates) {
+      const queryName = this.toCamelCase(template.qualifiedName);
+      output += `  /** Query ${template.qualifiedName} contracts */
+  export function ${queryName}(filter?: Partial<${template.qualifiedName}.Payload>): QuerySpec<${template.qualifiedName}.Payload> {
+    return {
+      templateId: TemplateIds.${template.qualifiedName},
+      filter: filter || {}
+    };
+  }
+
+`;
     }
 
-    // Factory payload type
-    output += `    /** Factory contract payload */\n`;
-    output += `    export interface Payload {\n`;
-    for (const field of factory.fields) {
-      output += `      ${field.name}: ${field.type};\n`;
-    }
-    output += `    }\n\n`;
-
-    // Generate choice argument types and choices object
-    if (factory.interfaceChoices.length > 0) {
-      // Choice argument types
-      for (const choice of factory.interfaceChoices) {
-        if (choice.args.length > 0) {
-          output += `    /** Arguments for ${choice.name} choice */\n`;
-          output += `    export interface ${choice.name}Args {\n`;
-          for (const arg of choice.args) {
-            output += `      ${arg.name}: ${arg.type};\n`;
-          }
-          output += `    }\n\n`;
-        }
-      }
-
-      // Choices object with names
-      output += `    /** Available choices on this factory */\n`;
-      output += `    export const choices = {\n`;
-      for (const choice of factory.interfaceChoices) {
-        output += `      ${choice.name}: '${choice.name}',\n`;
-      }
-      output += `    } as const;\n\n`;
-
-      // Helper function to create factory
-      output += `    /** Create a factory contract payload */\n`;
-      output += `    export function payload(params: Payload): { templateId: string; payload: Payload } {\n`;
-      output += `      return { templateId, payload: params };\n`;
-      output += `    }\n`;
-    }
-
-    // Reference template if available
-    if (factory.referenceTemplateId && factory.referenceFields) {
-      output += `\n    /** Reference template (for key-based lookups) */\n`;
-      output += `    export namespace Reference {\n`;
-      output += `      export const templateId = '${factory.referenceTemplateId}';\n\n`;
-      output += `      export interface Payload {\n`;
-      for (const field of factory.referenceFields) {
-        output += `        ${field.name}: ${field.type};\n`;
-      }
-      output += `      }\n`;
-      output += `    }\n`;
-    }
-
-    output += `  }\n\n`;
-
+    output += `}\n\n`;
     return output;
   }
 
-  private generateCreateAccountWorkflow(): string {
-    return `/**
- * ┌─────────────────────────────────────────────────────────────┐
- * │  CREATE ACCOUNT WORKFLOW                                    │
- * ├─────────────────────────────────────────────────────────────┤
- * │  Request a new account from a custodian.                    │
- * │                                                             │
- * │  Flow:                                                      │
- * │    1. Owner calls CreateAccount.request()                   │
- * │    2. Custodian sees the request                            │
- * │    3. Custodian calls CreateAccount.accept() or .decline()  │
- * │    4. If accepted, Account contract is created              │
- * └─────────────────────────────────────────────────────────────┘
- */
-export namespace CreateAccount {
+  private generateTypeGuardsNamespace(): string {
+    let output = `// ═══════════════════════════════════════════════════════════════
+// TYPE GUARDS
+// ═══════════════════════════════════════════════════════════════
+// Runtime type checking for template payloads
 
-  /** Request contract created when owner requests an account */
-  export interface Request {
-    custodian: Party;
-    owner: Party;
-  }
+export namespace TypeGuards {
+`;
 
-  /** Parameters for accepting an account request */
-  export interface AcceptParams {
-    /** Human-readable label for the account */
-    label: string;
-    /** Account description */
-    description: string;
-    /** Contract ID of the account factory to use */
-    accountFactoryCid: ContractId<unknown>;
-    /** Key identifying the holding factory */
-    holdingFactory: HoldingFactoryKey;
-    /** Additional observer parties */
-    observers: Party[];
-  }
+    // Generate type guards for ALL templates
+    for (const template of this.templates) {
+      const guardName = `is${template.qualifiedName.replace(/_/g, '')}`;
+      const requiredFields = template.fields.filter(f => !f.type.includes('Optional')).slice(0, 3);
 
-  /**
-   * Create a request for a new account.
-   * The owner requests an account from a custodian.
-   */
-  export function request(params: Request): Command<Request> {
-    return {
-      templateId: TemplateIds.Workflow_CreateAccount_Request,
-      argument: params
-    };
+      if (requiredFields.length > 0) {
+        output += `  /** Type guard for ${template.qualifiedName}.Payload */
+  export function ${guardName}(obj: unknown): obj is ${template.qualifiedName}.Payload {
+    if (!obj || typeof obj !== 'object') return false;
+    const record = obj as Record<string, unknown>;
+    return ${requiredFields.map(f => `'${f.name}' in record`).join(' && ')};
   }
-
-  /**
-   * Accept an account creation request.
-   * Only the custodian can accept.
-   */
-  export function accept(
-    contractId: ContractId<Request>,
-    params: AcceptParams
-  ): Command<AccountKey> {
-    return {
-      templateId: TemplateIds.Workflow_CreateAccount_Request,
-      choice: 'Accept',
-      contractId: contractId as string,
-      argument: params
-    };
-  }
-
-  /**
-   * Decline an account creation request.
-   * Only the custodian can decline.
-   */
-  export function decline(contractId: ContractId<Request>): Command<void> {
-    return {
-      templateId: TemplateIds.Workflow_CreateAccount_Request,
-      choice: 'Decline',
-      contractId: contractId as string,
-      argument: {}
-    };
-  }
-
-  /**
-   * Withdraw an account creation request.
-   * Only the original requester (owner) can withdraw.
-   */
-  export function withdraw(contractId: ContractId<Request>): Command<void> {
-    return {
-      templateId: TemplateIds.Workflow_CreateAccount_Request,
-      choice: 'Withdraw',
-      contractId: contractId as string,
-      argument: {}
-    };
-  }
-}
 
 `;
+      }
+    }
+
+    output += `}\n\n`;
+    return output;
   }
 
-  private generateTransferWorkflow(): string {
-    return `/**
- * ┌─────────────────────────────────────────────────────────────┐
- * │  TRANSFER WORKFLOW                                          │
- * ├─────────────────────────────────────────────────────────────┤
- * │  Request to transfer assets to another account.             │
- * │                                                             │
- * │  Flow:                                                      │
- * │    1. Receiver calls Transfer.request()                     │
- * │    2. Current owner sees the request                        │
- * │    3. Owner calls Transfer.accept() with holdingCid         │
- * │    4. Assets move to receiver's account                     │
- * └─────────────────────────────────────────────────────────────┘
- */
-export namespace Transfer {
-
-  /** Request contract for asset transfer */
-  export interface Request {
-    receiverAccount: AccountKey;
-    instrument: InstrumentKey;
-    amount: Numeric;
-    currentOwner: Party;
+  private toCamelCase(str: string): string {
+    return str.charAt(0).toLowerCase() + str.slice(1);
   }
 
-  /** Parameters for accepting a transfer request */
-  export interface AcceptParams {
-    holdingCid: ContractId<Holding>;
-  }
+  private generateReadme(): void {
+    // Find first template with choices for example
+    const exampleTemplate = this.templates.find(t =>
+      t.choices.filter(c => c.name !== 'Archive').length > 0
+    ) || this.templates[0];
 
-  export function request(params: Request): Command<Request> {
-    return {
-      templateId: TemplateIds.Workflow_Transfer_Request,
-      argument: params
-    };
-  }
+    const output = `# ${this.projectName.charAt(0).toUpperCase() + this.projectName.slice(1)} SDK
 
-  export function accept(
-    contractId: ContractId<Request>,
-    holdingCid: ContractId<Holding>
-  ): Command<ContractId<Holding>> {
-    return {
-      templateId: TemplateIds.Workflow_Transfer_Request,
-      choice: 'Accept',
-      contractId: contractId as string,
-      argument: { holdingCid }
-    };
-  }
+Generated TypeScript SDK for ${this.projectName} Canton ledger.
 
-  export function decline(contractId: ContractId<Request>): Command<void> {
-    return {
-      templateId: TemplateIds.Workflow_Transfer_Request,
-      choice: 'Decline',
-      contractId: contractId as string,
-      argument: {}
-    };
-  }
+## Installation
 
-  export function withdraw(contractId: ContractId<Request>): Command<void> {
-    return {
-      templateId: TemplateIds.Workflow_Transfer_Request,
-      choice: 'Withdraw',
-      contractId: contractId as string,
-      argument: {}
-    };
+\`\`\`bash
+npm install
+\`\`\`
+
+## Configuration
+
+Copy \`.env.example\` to \`.env\` and configure ledger connection:
+
+\`\`\`bash
+LEDGER_HOST=localhost
+LEDGER_PORT=7575
+LEDGER_TOKEN=  # Optional JWT token
+\`\`\`
+
+## Quick Start
+
+### Creating Contracts
+
+Every template has a namespace with \`create()\` and choice functions:
+
+\`\`\`typescript
+import { ${exampleTemplate?.qualifiedName || 'MyTemplate'}, TemplateIds } from './${this.projectName}-api';
+import { createLedgerClient } from './ledger';
+
+const ledger = createLedgerClient('alice::1220...', { host: 'localhost', port: 7575 });
+
+// Create a contract
+const cmd = ${exampleTemplate?.qualifiedName || 'MyTemplate'}.create({
+  // ... payload fields
+});
+const contractId = await ledger.create(cmd.templateId, cmd.argument);
+\`\`\`
+
+### Exercising Choices
+
+${exampleTemplate && exampleTemplate.choices.filter(c => c.name !== 'Archive').length > 0 ? `\`\`\`typescript
+// Exercise a choice
+const choiceCmd = ${exampleTemplate.qualifiedName}.${this.toChoiceFunctionName(exampleTemplate.choices.filter(c => c.name !== 'Archive')[0]?.name || 'accept')}(contractId);
+await ledger.exercise(choiceCmd.contractId, choiceCmd.choice, choiceCmd.argument);
+\`\`\`
+` : ''}
+### Querying Contracts
+
+\`\`\`typescript
+import { Query } from './${this.projectName}-api';
+
+// Query with type-safe filters
+const spec = Query.${this.toCamelCase(exampleTemplate?.qualifiedName || 'myTemplate')}({ /* filter */ });
+const contracts = await ledger.query(spec.templateId, spec.filter);
+\`\`\`
+
+## React Hooks (Optional)
+
+\`\`\`typescript
+import { CantonProvider } from './${this.projectName}-api/react';
+
+function App() {
+  return (
+    <CantonProvider config={{ ledgerUrl: 'http://localhost:7575' }} party="alice::1220...">
+      <YourComponent />
+    </CantonProvider>
+  );
+}
+\`\`\`
+
+## Utilities
+
+\`\`\`typescript
+import { normalizeAmount, formatAmount, addAmounts } from './utils';
+import { createAccountKey, createInstrumentKey } from './utils';
+import { toCantonTime, nowAsCantonTime } from './utils';
+\`\`\`
+
+## Error Handling
+
+\`\`\`typescript
+import { LedgerError, isLedgerError, withRetry } from './ledger';
+
+try {
+  await ledger.create(templateId, payload);
+} catch (error) {
+  if (isLedgerError(error)) {
+    console.error(\`Ledger error [\${error.code}]: \${error.message}\`);
   }
 }
-
+\`\`\`
 `;
+
+    const outputPath = path.join(this.outputDir, 'README.md');
+    fs.writeFileSync(outputPath, output);
+    console.log(`   ✓ README.md`);
   }
 
-  private generateCreditAccountWorkflow(): string {
-    return `/**
- * ┌─────────────────────────────────────────────────────────────┐
- * │  CREDIT ACCOUNT WORKFLOW                                    │
- * ├─────────────────────────────────────────────────────────────┤
- * │  Request to credit (mint) assets into an account.           │
- * │  Typically used by issuers to create new holdings.          │
- * └─────────────────────────────────────────────────────────────┘
- */
-export namespace CreditAccount {
+  private generateGitignore(): void {
+    const output = `# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
 
-  export interface Request {
-    account: AccountKey;
-    instrument: InstrumentKey;
-    amount: Numeric;
-  }
+# Build outputs
+dist/
+*.js
+*.d.ts
+*.js.map
 
-  export function request(params: Request): Command<Request> {
-    return {
-      templateId: TemplateIds.Workflow_CreditAccount_Request,
-      argument: params
-    };
-  }
+# Environment
+.env
+.env.local
 
-  export function accept(contractId: ContractId<Request>): Command<ContractId<Holding>> {
-    return {
-      templateId: TemplateIds.Workflow_CreditAccount_Request,
-      choice: 'Accept',
-      contractId: contractId as string,
-      argument: {}
-    };
-  }
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
 
-  export function decline(contractId: ContractId<Request>): Command<void> {
-    return {
-      templateId: TemplateIds.Workflow_CreditAccount_Request,
-      choice: 'Decline',
-      contractId: contractId as string,
-      argument: {}
-    };
-  }
+# OS
+.DS_Store
+Thumbs.db
 
-  export function withdraw(contractId: ContractId<Request>): Command<void> {
-    return {
-      templateId: TemplateIds.Workflow_CreditAccount_Request,
-      choice: 'Withdraw',
-      contractId: contractId as string,
-      argument: {}
-    };
-  }
-}
-
+# Keep example files
+!.env.example
 `;
+
+    const outputPath = path.join(this.outputDir, '.gitignore');
+    fs.writeFileSync(outputPath, output);
+    console.log(`   ✓ .gitignore`);
   }
 
-  private generateDvPWorkflow(): string {
-    return `/**
- * ┌─────────────────────────────────────────────────────────────┐
- * │  DVP (DELIVERY VS PAYMENT) WORKFLOW                         │
- * ├─────────────────────────────────────────────────────────────┤
- * │  Atomic exchange of two assets between counterparties.      │
- * │  Either both legs settle or neither does.                   │
- * └─────────────────────────────────────────────────────────────┘
- */
-export namespace DvP {
-
-  export interface Proposal {
-    recQuantity: Quantity;
-    payQuantity: Quantity;
-    proposer: Party;
-    counterparty: Party;
-    routeProviderCid: ContractId<unknown>;
-    settlementFactoryCid: ContractId<unknown>;
-    id: string;
-  }
-
-  export interface AcceptResult {
-    batchCid: ContractId<Batch>;
-    instruction1Cid: ContractId<Instruction>;
-    instruction2Cid: ContractId<Instruction>;
-  }
-
-  export function propose(params: Proposal): Command<Proposal> {
-    return {
-      templateId: TemplateIds.Workflow_DvP_Proposal,
-      argument: params
-    };
-  }
-
-  export function accept(contractId: ContractId<Proposal>): Command<AcceptResult> {
-    return {
-      templateId: TemplateIds.Workflow_DvP_Proposal,
-      choice: 'Accept',
-      contractId: contractId as string,
-      argument: {}
-    };
-  }
-
-  export function decline(contractId: ContractId<Proposal>): Command<void> {
-    return {
-      templateId: TemplateIds.Workflow_DvP_Proposal,
-      choice: 'Decline',
-      contractId: contractId as string,
-      argument: {}
-    };
-  }
-
-  export function withdraw(contractId: ContractId<Proposal>): Command<void> {
-    return {
-      templateId: TemplateIds.Workflow_DvP_Proposal,
-      choice: 'Withdraw',
-      contractId: contractId as string,
-      argument: {}
-    };
-  }
-}
-
-`;
-  }
 }
 
 // === MAIN ===

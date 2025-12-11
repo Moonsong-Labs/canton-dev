@@ -1,414 +1,144 @@
-# Canton API Enhancement Prompt
+# Canton SDK Validation Checklist
 
-Apply these enhancements to the generated `<project-name>-api.ts` to create a production-ready, React-friendly API.
+This prompt validates the generated SDK. Scripts generate ALL code; this checklist verifies completeness.
 
 ---
 
-## 1. QUERY HELPERS
+## 1. Verify Generated Structure
 
-Add after the workflow sections:
+Check that all directories and files were created:
 
-```typescript
-// ═══════════════════════════════════════════════════════════════
-// QUERY HELPERS
-// ═══════════════════════════════════════════════════════════════
+- [ ] `core/primitives.ts` - exports Canton types (Party, ContractId, Time, Numeric)
+- [ ] `core/interfaces.ts` - exports financial interfaces (Keys, Quantity, Lock)
+- [ ] `core/index.ts` - re-exports all core types
+- [ ] `ledger/config.ts` - exports LedgerConfig interface
+- [ ] `ledger/client.ts` - exports CantonLedgerClient class
+- [ ] `ledger/errors.ts` - exports LedgerError hierarchy
+- [ ] `ledger/retry.ts` - exports withRetry and createRetryClient helpers
+- [ ] `ledger/streaming.ts` - exports LedgerStream class
+- [ ] `ledger/index.ts` - re-exports all ledger components
+- [ ] `utils/amounts.ts` - exports amount utilities
+- [ ] `utils/ids.ts` - exports ID/key factory functions
+- [ ] `utils/datetime.ts` - exports date/time helpers
+- [ ] `utils/index.ts` - re-exports all utils
 
-/**
- * Query helpers for fetching contracts from the ledger.
- * Use with your ledger connection to fetch typed contracts.
- *
- * @example
- * ```tsx
- * const accounts = await ledger.query(Query.accounts({ owner: party }));
- * ```
- */
-export namespace Query {
-  /** Query accounts with optional filter */
-  export function accounts(filter?: Partial<Account>) {
-    return { templateId: TemplateIds.Account_Account, filter };
-  }
+---
 
-  /** Query holdings (TransferableFungible) */
-  export function holdings(filter?: Partial<Holding>) {
-    return { templateId: TemplateIds.Holding_TransferableFungible, filter };
-  }
+## 2. Verify Template Coverage
 
-  /** Query fungible holdings */
-  export function fungibleHoldings(filter?: Partial<Fungible>) {
-    return { templateId: TemplateIds.Holding_Fungible, filter };
-  }
+Check that template discovery worked correctly:
 
-  /** Query instruments */
-  export function instruments(filter?: Partial<Instrument>) {
-    return { templateId: TemplateIds.Instrument_Instrument, filter };
-  }
+- [ ] All templates from `daml-js/` have entries in `TemplateIds`
+- [ ] Template roles correctly classified (workflow/factory/asset/state)
+- [ ] **All templates** have a namespace with:
+  - `Payload` interface (template fields)
+  - `create()` function
+  - One function per choice (except Archive)
+- [ ] No templates missing from the generated API
 
-  /** Query pending account creation requests */
-  export function accountRequests(filter?: Partial<CreateAccount.Request>) {
-    return { templateId: TemplateIds.Workflow_CreateAccount_Request, filter };
-  }
+---
 
-  /** Query pending transfer requests */
-  export function transferRequests(filter?: Partial<Transfer.Request>) {
-    return { templateId: TemplateIds.Workflow_Transfer_Request, filter };
-  }
+## 3. Verify React Hooks (if generated)
 
-  /** Query pending credit requests */
-  export function creditRequests(filter?: Partial<CreditAccount.Request>) {
-    return { templateId: TemplateIds.Workflow_CreditAccount_Request, filter };
-  }
+Check `react/` directory:
 
-  /** Query pending DvP proposals */
-  export function dvpProposals(filter?: Partial<DvP.Proposal>) {
-    return { templateId: TemplateIds.Workflow_DvP_Proposal, filter };
-  }
+- [ ] `react/context/LedgerContext.tsx` - exports CantonProvider
+- [ ] `react/context/useLedger.ts` - exports useLedger hook
+- [ ] `react/hooks/core.ts` - exports useContractQuery, useChoiceMutation
+- [ ] `react/hooks/queries.ts` - exports typed query hooks (use{Entity}s)
+- [ ] `react/hooks/mutations.ts` - exports mutation hooks (use{Verb}{Entity})
+- [ ] `react/hooks/keys.ts` - exports queryKeys factories
+- [ ] `react/index.ts` - barrel export with all hooks
 
-  /** Query settlement batches */
-  export function batches(filter?: Partial<Batch>) {
-    return { templateId: TemplateIds.Settlement_Batch, filter };
-  }
+---
 
-  /** Query settlement instructions */
-  export function instructions(filter?: Partial<Instruction>) {
-    return { templateId: TemplateIds.Settlement_Instruction, filter };
-  }
-}
+## 4. TypeScript Validation
+
+Run strict TypeScript check:
+
+```bash
+npx tsc --noEmit --strict
 ```
 
----
-
-## 2. TYPE GUARDS
-
-Add runtime type checking utilities:
-
-```typescript
-// ═══════════════════════════════════════════════════════════════
-// TYPE GUARDS
-// ═══════════════════════════════════════════════════════════════
-
-/**
- * Runtime type guards for contract payloads.
- * Use when you need to verify contract types at runtime.
- *
- * @example
- * ```tsx
- * if (TypeGuards.isAccount(payload)) {
- *   console.log(payload.custodian); // TypeScript knows this is Account
- * }
- * ```
- */
-export const TypeGuards = {
-  isAccount: (v: unknown): v is Account =>
-    typeof v === 'object' && v !== null &&
-    'custodian' in v && 'owner' in v && 'holdingFactory' in v,
-
-  isHolding: (v: unknown): v is Holding =>
-    typeof v === 'object' && v !== null &&
-    'instrument' in v && 'account' in v && 'amount' in v,
-
-  isFungible: (v: unknown): v is Fungible =>
-    TypeGuards.isHolding(v),
-
-  isTransferable: (v: unknown): v is Transferable =>
-    TypeGuards.isHolding(v),
-
-  isTransferableFungible: (v: unknown): v is TransferableFungible =>
-    TypeGuards.isHolding(v),
-
-  isInstrument: (v: unknown): v is Instrument =>
-    typeof v === 'object' && v !== null &&
-    'depository' in v && 'issuer' in v && 'holdingStandard' in v,
-
-  isBatch: (v: unknown): v is Batch =>
-    typeof v === 'object' && v !== null &&
-    'instructor' in v && 'settlers' in v && 'routedStepsWithInstructionId' in v,
-
-  isInstruction: (v: unknown): v is Instruction =>
-    typeof v === 'object' && v !== null &&
-    'batchId' in v && 'routedStep' in v && 'allocation' in v,
-
-  isAccountKey: (v: unknown): v is AccountKey =>
-    typeof v === 'object' && v !== null &&
-    'custodian' in v && 'owner' in v && 'id' in v,
-
-  isInstrumentKey: (v: unknown): v is InstrumentKey =>
-    typeof v === 'object' && v !== null &&
-    'depository' in v && 'issuer' in v && 'id' in v && 'version' in v,
-} as const;
-```
+If errors occur:
+1. Fix import paths (ensure relative paths are correct)
+2. Fix type mismatches in generated code
+3. Add missing type exports if referenced
 
 ---
 
-## 3. MOCK FACTORIES
+## 5. API Quality Check
 
-Add testing utilities:
+Verify the main `<project>-api.ts`:
 
-```typescript
-// ═══════════════════════════════════════════════════════════════
-// MOCK FACTORIES (Testing)
-// ═══════════════════════════════════════════════════════════════
-
-/**
- * Mock factories for creating test data.
- * Use in unit tests to generate valid contract payloads.
- *
- * @example
- * ```tsx
- * const mockAccount = MockFactories.account({ description: 'Test' });
- * const mockHolding = MockFactories.holding({ amount: '500.00' });
- * ```
- */
-export const MockFactories = {
-  /** Create a mock party identifier */
-  party: (name: string = 'TestParty'): Party => `${name}::1220test`,
-
-  /** Create a mock Id */
-  id: (value: string = 'test-id'): Id => ({ unpack: value }),
-
-  /** Create a mock AccountKey */
-  accountKey: (overrides?: Partial<AccountKey>): AccountKey => ({
-    custodian: MockFactories.party('Custodian'),
-    owner: MockFactories.party('Owner'),
-    id: MockFactories.id('account-1'),
-    ...overrides,
-  }),
-
-  /** Create a mock InstrumentKey */
-  instrumentKey: (overrides?: Partial<InstrumentKey>): InstrumentKey => ({
-    depository: MockFactories.party('Depository'),
-    issuer: MockFactories.party('Issuer'),
-    id: MockFactories.id('USD'),
-    version: '1',
-    holdingStandard: { tag: 'TransferableFungible' },
-    ...overrides,
-  }),
-
-  /** Create a mock HoldingFactoryKey */
-  holdingFactoryKey: (overrides?: Partial<HoldingFactoryKey>): HoldingFactoryKey => ({
-    provider: MockFactories.party('Provider'),
-    id: MockFactories.id('holding-factory'),
-    ...overrides,
-  }),
-
-  /** Create a mock Quantity */
-  quantity: (amount: Numeric = '100.00', unit?: InstrumentKey): Quantity => ({
-    unit: unit ?? MockFactories.instrumentKey(),
-    amount,
-  }),
-
-  /** Create a mock Account */
-  account: (overrides?: Partial<Account>): Account => ({
-    custodian: MockFactories.party('Custodian'),
-    owner: MockFactories.party('Owner'),
-    lock: null,
-    controllers: { outgoing: [], incoming: [] },
-    id: MockFactories.id('account-1'),
-    description: 'Test Account',
-    holdingFactory: MockFactories.holdingFactoryKey(),
-    observers: {},
-    ...overrides,
-  }),
-
-  /** Create a mock Holding */
-  holding: (overrides?: Partial<Holding>): Holding => ({
-    instrument: MockFactories.instrumentKey(),
-    account: MockFactories.accountKey(),
-    amount: '1000.00',
-    lock: null,
-    observers: {},
-    ...overrides,
-  }),
-
-  /** Create a mock Instrument */
-  instrument: (overrides?: Partial<Instrument>): Instrument => ({
-    depository: MockFactories.party('Depository'),
-    issuer: MockFactories.party('Issuer'),
-    id: MockFactories.id('USD'),
-    version: '1',
-    holdingStandard: { tag: 'TransferableFungible' },
-    description: 'US Dollar',
-    validAsOf: new Date().toISOString(),
-    observers: {},
-    ...overrides,
-  }),
-
-  /** Wrap payload as Contract with ID */
-  contract: <T>(payload: T, contractId?: string): Contract<T> => ({
-    contractId: (contractId ?? `00${Math.random().toString(36).slice(2)}`) as ContractId<T>,
-    payload,
-    createdAt: new Date().toISOString(),
-  }),
-};
-```
+- [ ] `TemplateIds` object contains all discovered templates
+- [ ] Each template has its own namespace with `Payload`, `create()`, and choice functions
+- [ ] `Query` namespace exists with typed query helpers for each template
+- [ ] `TypeGuards` namespace exists with guards for each template
+- [ ] `MockFactories` object exists with factory functions for testing
+- [ ] No duplicate type exports
+- [ ] No circular imports
 
 ---
 
-## 4. REACT QUERY INTEGRATION
+## 6. Verify Tests (if generated)
 
-Add React Query types and utilities:
+Check `__tests__/` directory:
 
-```typescript
-// ═══════════════════════════════════════════════════════════════
-// REACT QUERY INTEGRATION
-// ═══════════════════════════════════════════════════════════════
-
-/**
- * Query key factories for @tanstack/react-query.
- * Ensures consistent cache key management.
- *
- * @example
- * ```tsx
- * const { data } = useQuery({
- *   queryKey: QueryKeys.accounts(party),
- *   queryFn: () => ledger.query(Query.accounts({ owner: party }))
- * });
- * ```
- */
-export const QueryKeys = {
-  accounts: (party?: Party) => ['accounts', party] as const,
-  holdings: (account?: AccountKey) => ['holdings', account] as const,
-  instruments: () => ['instruments'] as const,
-  requests: {
-    account: (party?: Party) => ['requests', 'account', party] as const,
-    transfer: (party?: Party) => ['requests', 'transfer', party] as const,
-    credit: (party?: Party) => ['requests', 'credit', party] as const,
-  },
-  proposals: {
-    dvp: (party?: Party) => ['proposals', 'dvp', party] as const,
-  },
-  settlement: {
-    batches: (party?: Party) => ['settlement', 'batches', party] as const,
-    instructions: (batchId?: Id) => ['settlement', 'instructions', batchId] as const,
-  },
-} as const;
-
-/** Query result type for contract queries (compatible with @tanstack/react-query v5) */
-export interface UseContractQueryResult<T> {
-  data: Contract<T>[] | undefined;
-  isLoading: boolean;
-  isFetching: boolean;
-  error: Error | null;
-  refetch: () => Promise<void>;
-}
-
-/** Mutation result type for contract exercises */
-export interface UseContractMutationResult<TArgs, TResult> {
-  mutate: (args: TArgs) => void;
-  mutateAsync: (args: TArgs) => Promise<TResult>;
-  data: TResult | undefined;
-  isLoading: boolean;
-  error: Error | null;
-  isSuccess: boolean;
-  reset: () => void;
-}
-
-/** Suspense-compatible query result (data is always defined) */
-export interface UseSuspenseQueryResult<T> {
-  data: Contract<T>[];
-  refetch: () => Promise<void>;
-  isFetching: boolean;
-}
-```
+- [ ] `<project>-api.test.ts` exists
+- [ ] Tests cover `create()` for each template
+- [ ] Tests cover each choice function
+- [ ] `vitest.config.ts` exists
 
 ---
 
-## 5. LEDGER CONNECTION INTERFACE
+## 7. Create Documentation
 
-Add ledger abstraction:
+Generate `docs/SDK.md` with complete, direct documentation. No fluff. Structure:
 
-```typescript
-// ═══════════════════════════════════════════════════════════════
-// LEDGER CONNECTION
-// ═══════════════════════════════════════════════════════════════
+### Required Sections
 
-/**
- * Ledger connection interface.
- * Implement this interface to connect the API to your ledger client.
- */
-export interface LedgerConnection {
-  /** Query contracts by template ID with optional filter */
-  query<T>(templateId: string, filter?: Partial<T>): Promise<Contract<T>[]>;
+**1. Quick Start**
+- Install dependencies
+- Configure environment (LEDGER_HOST, LEDGER_PORT, TEST_PARTY)
+- Create ledger client
+- First contract creation example
 
-  /** Exercise a choice on a contract */
-  exercise<T, R>(contractId: ContractId<T>, choice: string, args: unknown): Promise<ExerciseResult<R>>;
+**2. Templates Reference**
+For EACH template namespace discovered, document:
+- Namespace name and template ID
+- `Payload` interface with all fields and their types
+- `create()` function with example
+- Each choice function with example
+- Use actual field names and types from the generated code
 
-  /** Create a new contract */
-  create<T>(templateId: string, payload: T): Promise<ContractId<T>>;
+**3. Queries**
+- How to use `Query.<templateName>()` helpers
+- Filtering examples with actual Payload fields
 
-  /** Fetch a specific contract by ID */
-  fetch<T>(contractId: ContractId<T>): Promise<Contract<T> | null>;
-}
+**4. Error Handling**
+- LedgerError types
+- How to use `isLedgerError()` and `withRetry()`
 
-/**
- * Ledger context for React components.
- */
-export interface LedgerContext {
-  party: Party;
-  ledger: LedgerConnection;
-  isConnected: boolean;
-}
-```
+**5. React Integration** (if react/ was generated)
+- CantonProvider setup
+- Available hooks with examples
 
----
+### Documentation Rules
+- Every code example must be copy-pasteable
+- Use actual template names from the project
+- Reference actual field names and types
+- No placeholder text — use real values from generated code
+- Keep explanations to one sentence max
 
-## 6. TEST ASSERTIONS
-
-Add test assertion helpers:
-
-```typescript
-// ═══════════════════════════════════════════════════════════════
-// TEST ASSERTIONS
-// ═══════════════════════════════════════════════════════════════
-
-/**
- * Type assertion utilities for tests.
- * Throw errors if type guards fail.
- */
-export const TestAssertions = {
-  assertAccount: (v: unknown): asserts v is Account => {
-    if (!TypeGuards.isAccount(v)) throw new Error('Value is not an Account');
-  },
-  assertHolding: (v: unknown): asserts v is Holding => {
-    if (!TypeGuards.isHolding(v)) throw new Error('Value is not a Holding');
-  },
-  assertInstrument: (v: unknown): asserts v is Instrument => {
-    if (!TypeGuards.isInstrument(v)) throw new Error('Value is not an Instrument');
-  },
-  assertBatch: (v: unknown): asserts v is Batch => {
-    if (!TypeGuards.isBatch(v)) throw new Error('Value is not a Batch');
-  },
-  assertInstruction: (v: unknown): asserts v is Instruction => {
-    if (!TypeGuards.isInstruction(v)) throw new Error('Value is not an Instruction');
-  },
-};
-```
+Write the documentation to `<sdk-path>/docs/SDK.md`.
 
 ---
 
-## VALIDATION
+## Validation Complete
 
-After applying enhancements:
-
-1. Run `npx tsc --noEmit` to validate TypeScript
-2. Fix any type errors
-3. Ensure all imports reference `./core/primitives` and `./core/interfaces`
-
----
-
-## FINAL STRUCTURE
-
-The enhanced `<project-name>-api.ts` should have these sections in order:
-
-1. Imports
-2. Template IDs
-3. **WORKFLOWS** (CreateAccount, Transfer, CreditAccount, DvP)
-4. Holding Types
-5. Settlement Types
-6. Account Types
-7. Instrument Types
-8. **QUERY HELPERS** (new)
-9. **TYPE GUARDS** (new)
-10. **MOCK FACTORIES** (new)
-11. **REACT QUERY INTEGRATION** (new)
-12. **LEDGER CONNECTION** (new)
-13. **TEST ASSERTIONS** (new)
+When all checks pass:
+1. Run tests: `TEST_PARTY="party::id" npx vitest run`
+2. Build check: `npx tsc --build`
+3. Documentation created: `docs/SDK.md`
+4. Report success with template counts by role
