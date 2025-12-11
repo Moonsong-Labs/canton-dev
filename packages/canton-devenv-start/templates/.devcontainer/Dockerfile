@@ -31,7 +31,7 @@ RUN apt-get update && \
     echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_VERSION}.x nodistro main" > /etc/apt/sources.list.d/nodesource.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends nodejs && \
-    npm install -g typescript && \
+    npm install -g typescript ts-node react @tanstack/react-query vitest && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -42,9 +42,17 @@ RUN useradd -m -u 1001 -s /bin/bash daml || true && \
 USER daml
 WORKDIR /home/daml
 
+# Install Bun
+RUN curl -fsSL https://bun.sh/install | bash
+
+# Add Bun to PATH
+ENV BUN_INSTALL="/home/daml/.bun"
+ENV PATH="${BUN_INSTALL}/bin:${PATH}"
+
 # Install DAML SDK from GitHub releases
 RUN echo "Installing DAML SDK version ${DAML_SDK_VERSION} from GitHub..." && \
-    curl -sSL "https://github.com/digital-asset/daml/releases/download/v${DAML_SDK_VERSION}/daml-sdk-${DAML_SDK_VERSION}-linux.tar.gz" -o daml-sdk.tar.gz && \
+    curl -fsSL -o daml-sdk.tar.gz \
+        "https://github.com/digital-asset/daml/releases/download/v${DAML_SDK_VERSION}/daml-sdk-${DAML_SDK_VERSION}-linux.tar.gz" && \
     mkdir -p /home/daml/.daml/sdk/${DAML_SDK_VERSION} && \
     tar -xzf daml-sdk.tar.gz -C /home/daml/.daml/sdk/${DAML_SDK_VERSION} --strip-components=1 && \
     rm daml-sdk.tar.gz && \

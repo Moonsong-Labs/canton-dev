@@ -65,21 +65,24 @@ Where:
 
 ---
 
-## STEP 5: Run Generator Script
+## STEP 5: Run API Generator (GENERATES ALL CODE)
 
-Ensure the output directory has dependencies, then run the generator.
-
-The generator script is located in this skill's directory at `scripts/generate-canton-api.ts`.
+The generator script produces ALL SDK code including:
+- Core types (primitives, interfaces)
+- Template IDs and type definitions
+- Template namespaces (each with Payload, create(), and choice functions)
+- Query helpers, TypeGuards, MockFactories
+- Error classes and retry helpers
+- Utils (amounts, ids, datetime)
 
 ```bash
-cd <sdk-path> && npm install && npx ts-node <path-to-skill>/scripts/generate-canton-api.ts daml-js . <project-name>
+cd <sdk-path> && npx ts-node <path-to-skill>/scripts/generate-canton-api.ts daml-js . <project-name>
 ```
 
 Where:
 - `<path-to-skill>` is the absolute path to this skill's directory
 - `<sdk-path>` defaults to `<project-path>/sdk`
 - `<project-name>` is the name discovered in Step 1
-- Output will be written to `<sdk-path>/`
 
 ---
 
@@ -93,38 +96,33 @@ Fix any errors before proceeding.
 
 ---
 
-## STEP 7: Enhance the Generated API
+## STEP 7: Generate React Layer (GENERATES ALL REACT CODE)
 
-Read and apply the enhancement instructions from `prompts/enhance-api.md` in this skill's directory.
+Run the React hooks generator:
 
-Add the following to `<project-name>-api.ts`:
-1. **Query namespace** - Helper functions for querying contracts
-2. **TypeGuards** - Runtime type checking utilities
-3. **MockFactories** - Testing utilities for creating mock data
-4. **QueryKeys** - React Query cache key factories
-5. **LedgerConnection** - Interface for ledger abstraction
-6. **TestAssertions** - Type assertion utilities for tests
+```bash
+cd <sdk-path> && npx ts-node <path-to-skill>/scripts/generate-canton-react.ts . <project-name>
+```
 
-After adding enhancements, re-validate TypeScript.
+Generates:
+- `react/context/LedgerContext.tsx` - React context provider
+- `react/context/useLedger.ts` - Context hook
+- `react/hooks/core.ts` - Generic hooks (useContractQuery, useChoiceMutation)
+- `react/hooks/queries.ts` - Typed query hooks for each template
+- `react/hooks/mutations.ts` - Typed mutation hooks (action-first naming)
+- `react/hooks/keys.ts` - Query key factories
+- `react/index.ts` - Barrel export
 
 ---
 
-## STEP 8: Generate Tests
+## STEP 8: Validate & Document
 
-Run the test generator to create explicit tests for the generated API.
+Read `prompts/enhance-api.md` for validation checklist:
+- Verify all templates have namespaces with Payload, create(), and choices
+- Check TypeScript compiles with strict mode
+- Create `docs/SDK.md` documentation (required)
 
-The test generator script is at `scripts/generate-canton-tests.ts` in this skill's directory.
-
-```bash
-cd <sdk-path> && npx ts-node <path-to-skill>/scripts/generate-canton-tests.ts . <project-name>
-```
-
-This will:
-1. Parse the generated `<project-name>-api.ts`
-2. Discover all TemplateIds, workflows, TypeGuards, and MockFactories
-3. Generate explicit test cases for each component
-4. Create `__tests__/<project-name>-api.test.ts`
-5. Create `vitest.config.ts` if it doesn't exist
+This step validates generated code and creates user documentation.
 
 ---
 
@@ -135,16 +133,19 @@ Report when complete:
 - Project path: `<project-path>`
 - SDK path: `<sdk-path>`
 - DAR files processed: (list count)
-- Templates found
-- Workflows generated
-- Interfaces extracted
+- Templates discovered (by role: workflow/factory/asset/state)
 - TypeScript validation: ✅/❌
-- **Tests generated:** (count of test suites)
-- **Run tests with:** `cd <sdk-path> && npx vitest run`
-- Files created:
-  - `<sdk-path>/core/primitives.ts`
-  - `<sdk-path>/core/interfaces.ts`
-  - `<sdk-path>/core/index.ts`
-  - `<sdk-path>/<project-name>-api.ts`
-  - `<sdk-path>/__tests__/<project-name>-api.test.ts`
-  - `<sdk-path>/vitest.config.ts`
+- Documentation created: ✅/❌
+
+---
+
+## Next Steps
+
+After SDK generation is complete, suggest:
+
+> "SDK generated successfully! To generate integration tests, run the `canton-test-generator` skill."
+
+The test generator will:
+1. Look for DAML test scripts in `daml/Scripts/tests/`
+2. Generate TypeScript tests that mirror the DAML workflows
+3. Or generate basic template tests if no DAML scripts exist
