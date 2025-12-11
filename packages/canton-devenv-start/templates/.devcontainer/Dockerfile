@@ -51,7 +51,8 @@ ENV PATH="${BUN_INSTALL}/bin:${PATH}"
 
 # Install DAML SDK from GitHub releases
 RUN echo "Installing DAML SDK version ${DAML_SDK_VERSION} from GitHub..." && \
-    curl -sSL "https://github.com/digital-asset/daml/releases/download/v${DAML_SDK_VERSION}/daml-sdk-${DAML_SDK_VERSION}-linux.tar.gz" -o daml-sdk.tar.gz && \
+    curl -fsSL -o daml-sdk.tar.gz \
+        "https://github.com/digital-asset/daml/releases/download/v${DAML_SDK_VERSION}/daml-sdk-${DAML_SDK_VERSION}-linux.tar.gz" && \
     mkdir -p /home/daml/.daml/sdk/${DAML_SDK_VERSION} && \
     tar -xzf daml-sdk.tar.gz -C /home/daml/.daml/sdk/${DAML_SDK_VERSION} --strip-components=1 && \
     rm daml-sdk.tar.gz && \
