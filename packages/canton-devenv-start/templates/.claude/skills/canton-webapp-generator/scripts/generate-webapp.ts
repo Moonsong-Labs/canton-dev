@@ -86,7 +86,6 @@ class WebappGenerator {
         dev: 'vite',
         build: 'tsc && vite build',
         preview: 'vite preview',
-        lint: 'eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0',
       },
       dependencies: {
         react: '^18.2.0',
@@ -97,6 +96,7 @@ class WebappGenerator {
       devDependencies: {
         '@types/react': '^18.2.37',
         '@types/react-dom': '^18.2.15',
+        '@types/node': '^18.0.0',
         '@vitejs/plugin-react': '^4.2.0',
         autoprefixer: '^10.4.16',
         postcss: '^8.4.31',
@@ -122,6 +122,10 @@ export default defineConfig({
   },
   server: {
     port: 3000,
+    // Allow importing the sibling ../sdk folder in dev
+    fs: {
+      allow: [path.resolve(__dirname, '..')],
+    },
     proxy: {
       '/v1': {
         target: process.env.VITE_LEDGER_URL || 'http://localhost:7575',
@@ -794,25 +798,9 @@ export function useAuth() {
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import type { QueryKey } from '@tanstack/react-query';
 import { useAuth } from './useAuth';
-import { CantonLedgerClient, getParties, createConfig } from '@sdk/ledger';
+import { CantonLedgerClient } from '@sdk/ledger';
 import type { ContractId, Contract } from '@sdk/core/primitives';
 import { getLedgerUrl, QUERY_KEYS } from '@/lib/constants';
-
-/**
- * Hook to fetch all parties from the ledger.
- * Uses the proxy at /v1 which forwards to the Canton JSON API.
- */
-export function useParties() {
-  return useQuery({
-    queryKey: QUERY_KEYS.parties,
-    queryFn: async () => {
-      const ledgerUrl = getLedgerUrl();
-      const config = createConfig({ ledgerUrl });
-      return getParties(config);
-    },
-    staleTime: 30000,
-  });
-}
 
 /**
  * Hook to get a ledger client for the current party.
@@ -991,7 +979,6 @@ export { AuthProvider, useAuth } from './useAuth';
 
 // Ledger hooks
 export {
-  useParties,
   useLedgerClient,
   useContractQuery,
   useCreateContract,
@@ -1014,70 +1001,43 @@ export {
   private generateBaseFeatures(): void {
     // PartySelector
     const partySelector = `import { useNavigate } from 'react-router-dom';
+import { useState } from 'react';
 import { useAuth } from '@/hooks/useAuth';
-import { useParties } from '@/hooks/useLedger';
-import { Card, Button, Spinner } from '@/components/ui';
+import { Card, Button, Input } from '@/components/ui';
 
 export function PartySelector() {
   const navigate = useNavigate();
   const { setParty } = useAuth();
-  const { data: parties, isLoading, error } = useParties();
+  const [party, setPartyValue] = useState('');
 
-  const handleSelectParty = (party: string) => {
-    setParty(party);
+  const onContinue = () => {
+    const trimmed = party.trim();
+    if (!trimmed) return;
+    setParty(trimmed);
     navigate('/dashboard');
   };
-
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Spinner size="lg" />
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Card className="max-w-md text-center">
-          <p className="text-red-400 mb-4">Failed to connect to ledger</p>
-          <p className="text-slate-400 text-sm mb-4">
-            Make sure Canton ledger is running. The app expects the JSON API at localhost:7575.
-          </p>
-          <p className="text-slate-500 text-xs">
-            Error: {String(error)}
-          </p>
-        </Card>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4">
       <Card className="max-w-md w-full">
-        <h2 className="text-xl font-bold text-slate-100 mb-6 text-center">
-          Select Party
+        <h2 className="text-xl font-bold text-slate-100 mb-4 text-center">
+          Enter Party
         </h2>
-        <div className="space-y-2">
-          {parties?.map((party) => (
-            <Button
-              key={party}
-              variant="secondary"
-              className="w-full justify-start font-mono text-sm"
-              onClick={() => handleSelectParty(party)}
-            >
-              {party.split('::')[0]}
-              <span className="text-slate-500 ml-2 text-xs">
-                {party.split('::')[1]?.slice(0, 8)}...
-              </span>
-            </Button>
-          ))}
+        <p className="text-slate-400 text-sm mb-4 text-center">
+          Paste a party identifier from your ledger output (for example from \`daml start\`).
+        </p>
+
+        <div className="space-y-4">
+          <Input
+            label="Party ID"
+            placeholder="Alice::1220..."
+            value={party}
+            onChange={(e) => setPartyValue(e.target.value)}
+          />
+          <Button className="w-full" onClick={onContinue} disabled={!party.trim()}>
+            Continue
+          </Button>
         </div>
-        {(!parties || parties.length === 0) && (
-          <p className="text-slate-400 text-center">
-            No parties found on ledger
-          </p>
-        )}
       </Card>
     </div>
   );
@@ -1473,7 +1433,7 @@ function main(): void {
 
   if (args.length < 2) {
     console.error('Usage: npx ts-node generate-webapp.ts <project-path> <project-name>');
-    console.error('Example: npx ts-node generate-webapp.ts /path/to/project vault');
+    console.error('Example: npx ts-node generate-webapp.ts /path/to/project myproject');
     process.exit(1);
   }
 
@@ -1489,5 +1449,7 @@ function main(): void {
   generator.generate();
 }
 
-main();
+if (require.main === module) {
+  main();
+}
 

@@ -56,7 +56,7 @@ ls <project-path>/daml/Scripts/Setup.daml
 **If Setup.daml exists**, create `sdk/__tests__/testSetup.ts`:
 
 1. Read `Setup.daml` and understand what it sets up (factories, instruments, accounts, initial state)
-2. **Extract actual values** - note the specific IDs, amounts, and configuration values used (e.g., `vaultId = "vault-001"`, not made-up values)
+2. **Extract actual values** - note the specific IDs, amounts, and configuration values used (e.g., `configId = "config-001"`, not made-up values)
 3. **Create a `testSetup.ts` that CREATES the same contracts** - the setup file must replicate the Setup.daml logic using the SDK, actually creating contracts on the ledger
 4. Export parties (from environment variables), ledger clients, and any contract IDs created
 5. **Export configuration values** as constants so tests use the same values as Setup.daml
@@ -71,7 +71,7 @@ ls <project-path>/daml/Scripts/Setup.daml
 
 The setup file should:
 
-1. **Check if setup already ran** - Query for a key contract (e.g., VaultState). If it exists, skip creation to allow re-running tests.
+1. **Check if setup already ran** - Query for a key contract created by setup (e.g., a config or state contract). If it exists, skip creation to allow re-running tests.
 2. **Re-fund user accounts if needed** - When reusing existing state, users may have consumed their holdings from previous test runs. Check and re-fund if necessary.
 3. **Create factories** - Account factory, holding factory, token factory
 4. **Create instruments** - Tokens/assets the system uses
@@ -142,7 +142,7 @@ beforeAll(async () => {
   const holdingFactoryCmd = Holding_Factory.create({
     provider: operator,
     id: { unpack: "Holding Factory" },
-    observers: [] as unknown as Record<string, Party[]>
+    observers: []
   });
   const holdingFactoryCid = await operatorLedger.create(holdingFactoryCmd.templateId, holdingFactoryCmd.argument);
 
@@ -150,7 +150,7 @@ beforeAll(async () => {
   const holdingFactoryRefCmd = Holding_Factory_Reference.create({
     factoryView: { provider: operator, id: { unpack: "Holding Factory" } } as any,
     cid: holdingFactoryCid as any,
-    observers: [] as unknown as Record<string, Party[]>
+    observers: []
   });
   await operatorLedger.create(holdingFactoryRefCmd.templateId, holdingFactoryRefCmd.argument);
 
@@ -206,21 +206,24 @@ For each `.daml` file in `Scripts/tests/`:
      // const contracts = await ledger.query(Query.yourProject_State_MainState());
      ```
 4. **Apply DRY** - extract helpers for repeated patterns, don't duplicate code
-5. **Map parties** - DAML party names become environment variables (e.g. `alice` → `process.env.ALICE_PARTY`)
+5. **Map parties** - DAML party names become environment variables (e.g. `user` → `process.env.USER_PARTY`)
 6. **Verify the same outcome** - the test should assert that the final state matches what the DAML script expects
 
 ### Test Independence
 
 Each test should be **runnable independently** where possible:
-- If a test depends on prior state (e.g., redemption requires a prior deposit), either:
+- If a test depends on prior state (e.g., a withdrawal requires a prior credit), either:
   - Create the required state in the test's own `beforeAll`
   - OR clearly document the dependency and required test order
+
+**IMPORTANT**: Test file execution order is not guaranteed. Prefer making each test self-contained.
+If you must enforce order (last resort), prefix filenames with numbers (e.g., `01_`, `02_`, `03_`).
 
 ### Setup Verification
 
 In `beforeAll()`, **verify the ledger is properly set up** before running tests:
 - Query for expected contracts from Setup.daml
-- Throw a clear error if setup contracts are missing (e.g., "VaultState not found. Ensure `daml start` completed successfully.")
+- Throw a clear error if setup contracts are missing (e.g., "Setup contracts not found. Ensure `daml start` completed successfully.")
 
 ### CRITICAL: Query API Pattern
 
@@ -277,7 +280,7 @@ export type Numeric = string;
 
 // ✅ CORRECT - use string literals for amounts
 const amount: Numeric = "500.0";
-const sharePrice: Numeric = "1.0";
+const price: Numeric = "1.0";
 const initialBalance: Numeric = "1000.0";
 
 // ❌ WRONG - numbers cause type errors
@@ -290,16 +293,16 @@ Since `Numeric` is a string, you must parse before arithmetic:
 
 ```typescript
 // ✅ CORRECT - parse to number for calculations
-const depositAmount = "500.0";
-const sharePrice = "1.0";
-const expectedShares = parseFloat(depositAmount) / parseFloat(sharePrice);
+const amount = "500.0";
+const price = "1.0";
+const expectedResult = parseFloat(amount) / parseFloat(price);
 
 // For comparisons with contract data:
-const actualShares = parseFloat(vaultState.payload.totalShares);
-expect(actualShares).toBeCloseTo(expectedShares, 6);
+const actualAmount = parseFloat(contractState.payload.totalAmount);
+expect(actualAmount).toBeCloseTo(expectedResult, 6);
 
 // ❌ WRONG - direct arithmetic on strings
-const shares = depositAmount / sharePrice;  // NaN or type error
+const result = amount / price;  // NaN or type error
 ```
 
 #### 4. InstrumentKey and AccountKey
@@ -318,8 +321,8 @@ const instrumentKey: InstrumentKey = {
 
 const accountKey: AccountKey = {
   custodian: custodianParty,
-  owner: aliceParty,
-  id: { unpack: "Alice@Vault" }  // Id type, not string
+  owner: userParty,
+  id: { unpack: "User@Operator" }  // Id type, not string
 };
 
 // ❌ WRONG - plain string ids
@@ -371,26 +374,36 @@ const result = await ledger.exercise(
 const accountKey = result.exerciseResult as AccountKey;
 ```
 
-#### 6. Daml Enum Types
+#### 6. Daml Enum vs Variant JSON Encoding (CRITICAL)
 
-Daml enums are serialized as tagged objects, not strings:
+Daml has **enums** and **variants** and they serialize differently in the JSON API:
+
+- **Enums** (no payload) serialize as **strings**:
+  - JSON: `"TransferableFungible"`
+- **Variants** (sum types) serialize as **objects**:
+  - JSON: `{ "tag": "Constructor", "value": <payload> }`
+  - If the constructor has no payload, the JSON may be `{ "tag": "Constructor" }`
+
+**Daml Finance note**: `HoldingStandard` is commonly an **enum** in practice, so the JSON API expects a string.
 
 ```typescript
-// Daml: data HoldingStandard = TransferableFungible | Fungible | ...
+// Example enum value (JSON: "TransferableFungible")
+const holdingStandard = "TransferableFungible" as any;
 
-// ✅ CORRECT - tagged object format
-const holdingStandard = { tag: "TransferableFungible" };
-
-// ❌ WRONG - plain string
-const holdingStandard = "TransferableFungible";  // Will fail at runtime
+// Example variant value (JSON: { tag, value })
+const someVariant = { tag: "SomeCase", value: { /* payload */ } } as any;
 ```
+
+**Rule of thumb**:
+- If the generated type looks like a **string union**, pass a string.
+- If it looks like a union of `{ tag: ... }` objects, pass the tagged object.
 
 #### 7. Type Imports
 
 Import the necessary types from the SDK:
 
 ```typescript
-import type { Id, Numeric, Party, ContractId } from '../core/primitives';
+import type { Id, Numeric, Party, ContractId, DamlMap } from '../core/primitives';
 import type { InstrumentKey, AccountKey, HoldingFactoryKey } from '../core/interfaces';
 ```
 
@@ -403,16 +416,24 @@ Daml `Map` types are serialized as arrays of key-value pairs, NOT as objects:
 // Used for: observers field in many Daml Finance templates
 
 // ✅ CORRECT - empty Map is an empty array
-const observers: [] as unknown as Record<string, Party[]> = [];
+const observers: DamlMap<string, Party[]> = [];
 
 // ✅ CORRECT - Map with entries is array of [key, value] pairs
-const observersWithData = [["label1", [party1, party2]]] as unknown as Record<string, Party[]>;
+const observersWithData: DamlMap<string, Party[]> = [["label1", [party1, party2]]];
 
 // ❌ WRONG - object format causes serialization errors
 const observers = {};  // Will fail at runtime
 ```
 
 This applies to all `observers` fields in Daml Finance templates (Account_Factory, Holding_Factory, Token_Instrument, etc.).
+
+#### 8.1 Query Filters: Avoid Enums/Variants When Possible
+
+The JSON API query predicate parser can be fragile with nested enum/variant fields inside filters.
+If a record field contains an enum/variant (e.g., `InstrumentKey.holdingStandard`), prefer **query-safe filters**:
+
+- Build a filter that omits enum/variant fields (partial record matching), e.g. `Omit<InstrumentKey, 'holdingStandard'>`
+- Or filter by primitive sub-fields (issuer/depository/id/version) rather than the entire nested record
 
 #### 9. Daml Finance Holdings Behavior
 
@@ -427,7 +448,7 @@ When working with holdings in Daml Finance workflows:
 // 1. First split the holding using Fungible.Split interface
 // 2. Then use the split holding in the workflow
 
-// Example: If Alice has 1000 USD and wants to deposit 500
+// Example: If user has 1000 USD and wants to transfer 500
 // Option A: Deposit all 1000 (simpler)
 const depositAmount = "1000.0";  // Full balance
 
@@ -468,7 +489,7 @@ Use descriptive assertion messages that explain what's being checked:
 expect(holdings.length).toBeGreaterThan(0);
 
 // GOOD - explains what should exist and why
-expect(holdings.length, 'Alice should have USD holdings from setup script').toBeGreaterThan(0);
+expect(holdings.length, 'User should have USD holdings from setup script').toBeGreaterThan(0);
 ```
 
 ### Test File Structure (with Setup)
@@ -482,7 +503,7 @@ If `testSetup.ts` was created, import from it:
  * Prerequisites:
  * 1. Start Canton ledger: `daml start`
  * 2. Setup script runs automatically via init-script in daml.yaml
- * 3. Set environment variables: ALICE_PARTY, BOB_PARTY
+ * 3. Set environment variables: USER_PARTY, OPERATOR_PARTY
  * 
  * Workflow: <brief description>
  */
@@ -523,7 +544,7 @@ If no Setup.daml exists, tests are self-contained:
  * 
  * Prerequisites:
  * 1. Start Canton ledger: `daml start`
- * 2. Set environment variables: ALICE_PARTY, BOB_PARTY
+ * 2. Set environment variables: USER_PARTY, OPERATOR_PARTY
  * 
  * Workflow: <brief description>
  */
@@ -575,6 +596,9 @@ export default defineConfig({
     include: ['__tests__/**/*.test.ts'],
     setupFiles: ['__tests__/testSetup.ts'], // Only if testSetup.ts was created
     testTimeout: 30000,
+    // Canton often hits LOCKED_CONTRACTS if multiple files mutate shared contracts in parallel.
+    // Force files to run sequentially.
+    fileParallelism: false,
     sequence: {
       concurrent: false,
     },

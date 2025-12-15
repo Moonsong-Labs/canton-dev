@@ -67,7 +67,7 @@ This creates `<project-path>/webapp/` with:
 - Project config (package.json, vite.config.ts, tailwind.config.js, .env.example)
 - Base UI components (Button, Card, Input, Modal, Select, Badge, Spinner)
 - Layout components (MainLayout, Header, Sidebar)
-- Core hooks (useAuth, useLedger, useParties, useContractQuery, useAnyContracts)
+- Core hooks (useAuth, useLedgerClient, useContractQuery, useAnyContracts)
 - Base features (PartySelector, Dashboard, ContractList - all working!)
 - App shell (main.tsx, App.tsx)
 - Utility functions (getLedgerUrl, formatPartyId, formatAmount)
@@ -86,31 +86,57 @@ cd <project-path>/webapp && npm install
 
 Read `prompts/customization.md` for detailed patterns, then:
 
-### 4.1 Create Domain Hooks
+### 4.1 Discover All Choices from SDK
 
-In `src/hooks/useContracts.ts`, create hooks for each template type:
+**CRITICAL**: Read the SDK's `<project-name>-api.ts` and extract ALL available choices for each template. Look for:
+
+```typescript
+// In the SDK, each template namespace exports choice functions:
+export namespace MyModule_MyTemplate {
+  export interface Payload { ... }
+  export function create(...): Command<Payload>;
+  export function Accept(contractId: ContractId<Payload>): Command<...>;  // <- Choice
+  export function Transfer(contractId: ContractId<Payload>, args: {...}): Command<...>;  // <- Choice
+}
+```
+
+Every exported function (except `create`) is an exercisable choice. You MUST create hooks for ALL of them.
+
+### 4.2 Create Domain Hooks
+
+In `src/hooks/useContracts.ts`, create hooks for **each template AND each choice**:
 
 ```typescript
 import { TemplateIds, MyTemplate } from '@sdk/<project-name>-api';
 import { useContractQuery, useExerciseChoice } from './useLedger';
 
+// Query hook for template
 export function useMyContracts() {
   return useContractQuery<MyTemplate.Payload>(TemplateIds.MyModule_MyTemplate);
 }
 
+// Hook for EVERY choice discovered in SDK
 export function useAcceptMyContract() {
   return useExerciseChoice(TemplateIds.MyModule_MyTemplate, 'Accept');
 }
+
+export function useTransferMyContract() {
+  return useExerciseChoice(TemplateIds.MyModule_MyTemplate, 'Transfer');
+}
+
+// ... create a hook for EACH choice found in the SDK
 ```
 
-### 4.2 Create Feature Components
+### 4.3 Create Feature Components
 
 For each major template, create in `src/features/`:
 - `<TemplateName>List.tsx` - List view with query hook
-- `<TemplateName>Detail.tsx` - Detail view with choice actions
+- `<TemplateName>Detail.tsx` - Detail view with ALL choice actions from SDK
 - `Create<TemplateName>.tsx` - Form to create new contracts
 
-### 4.3 Add Routes
+**Important**: The Detail view must include buttons for ALL choices discovered in the SDK, not just a subset.
+
+### 4.4 Add Routes
 
 Update `src/App.tsx` with routes for new features:
 
@@ -120,7 +146,7 @@ Update `src/App.tsx` with routes for new features:
 <Route path="/create-my-contract" element={<CreateMyContract />} />
 ```
 
-### 4.4 Update Navigation
+### 4.5 Update Navigation
 
 Add links to `src/components/layout/Sidebar.tsx` for new features.
 
@@ -136,8 +162,7 @@ cd <project-path>/webapp && npm run dev
 
 Verify:
 - [ ] App loads at http://localhost:3000
-- [ ] Party selector shows parties from ledger
-- [ ] Selecting a party navigates to dashboard
+- [ ] Party selector accepts a party ID and navigates to dashboard
 - [ ] Contract queries return data (if contracts exist)
 
 ---
@@ -161,17 +186,20 @@ Report when complete:
 - Dependencies installed: ✅/❌
 - Dev server URL: http://localhost:3000
 - Templates discovered: (list from SDK)
-- Domain hooks created: (list each with template it queries)
-- Features implemented: (list each with functionality)
+- Choices discovered per template: (list each template with its choices)
+- Domain hooks created: (list query hooks AND choice hooks)
+- Features implemented: (list each with functionality and which choices are wired)
 
 ### Completion Checklist
 
 Before reporting success, verify ALL of the following:
 
-- [ ] Every template in SDK has a corresponding domain hook in `useContracts.ts`
+- [ ] SDK was parsed to discover ALL templates and ALL choices
+- [ ] Every template in SDK has a corresponding query hook in `useContracts.ts`
+- [ ] Every choice in SDK has a corresponding exercise hook in `useContracts.ts`
 - [ ] Every domain hook is used in at least one feature component
 - [ ] Every feature component has working queries and mutations
-- [ ] Every action button is wired to a real choice exercise
+- [ ] Contract detail views include buttons for ALL choices available on that template
 - [ ] Navigation includes links to all implemented features
 - [ ] No TODO comments or placeholder text remain in any file
 - [ ] App runs without console errors when connected to ledger
