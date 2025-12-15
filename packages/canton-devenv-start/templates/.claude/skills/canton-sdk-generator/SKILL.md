@@ -73,7 +73,7 @@ The generator script produces ALL SDK code including:
 - Template namespaces (each with Payload, create(), and choice functions)
 - Query helpers, TypeGuards, MockFactories
 - Error classes and retry helpers
-- Utils (amounts, ids, datetime)
+- Utils (amounts, ids, datetime, damlMap)
 
 ```bash
 cd <sdk-path> && npx ts-node <path-to-skill>/scripts/generate-canton-api.ts daml-js . <project-name>
@@ -109,8 +109,8 @@ Generates:
 - `react/context/useLedger.ts` - Context hook
 - `react/hooks/core.ts` - Generic hooks (useContractQuery, useChoiceMutation)
 - `react/hooks/queries.ts` - Typed query hooks for each template
-- `react/hooks/mutations.ts` - Typed mutation hooks (action-first naming)
-- `react/hooks/keys.ts` - Query key factories
+- `react/hooks/mutations.ts` - Typed create + choice mutation hooks (action-first naming) and grouped actions per template
+- `react/hooks/keys.ts` - Query key factories aligned with core query keys (so invalidation works)
 - `react/index.ts` - Barrel export
 
 ---
@@ -123,6 +123,18 @@ Read `prompts/enhance-api.md` for validation checklist:
 - Create `docs/SDK.md` documentation (required)
 
 This step validates generated code and creates user documentation.
+
+### Debugging JSON API Auth (curl)
+
+If you manually call the JSON API (e.g. with curl) and see:
+`missing Authorization header with OAuth 2.0 Bearer Token`
+
+Remember:
+- The JSON API needs `Authorization: Bearer <JWT>`
+- Unsigned sandbox JWTs must end with a trailing `.`
+- Always quote the header string to avoid shell mangling
+
+The generated SDK README includes a copy‑pasteable curl + token snippet.
 
 ---
 

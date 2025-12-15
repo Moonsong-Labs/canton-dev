@@ -20,6 +20,7 @@ Check that all directories and files were created:
 - [ ] `utils/amounts.ts` - exports amount utilities
 - [ ] `utils/ids.ts` - exports ID/key factory functions
 - [ ] `utils/datetime.ts` - exports date/time helpers
+- [ ] `utils/damlMap.ts` - exports helpers for Daml `Map<K, V>` (array-of-pairs)
 - [ ] `utils/index.ts` - re-exports all utils
 
 ---
@@ -46,8 +47,8 @@ Check `react/` directory:
 - [ ] `react/context/useLedger.ts` - exports useLedger hook
 - [ ] `react/hooks/core.ts` - exports useContractQuery, useChoiceMutation
 - [ ] `react/hooks/queries.ts` - exports typed query hooks (use{Entity}s)
-- [ ] `react/hooks/mutations.ts` - exports mutation hooks (use{Verb}{Entity})
-- [ ] `react/hooks/keys.ts` - exports queryKeys factories
+- [ ] `react/hooks/mutations.ts` - exports create + choice mutation hooks (useCreate{Entity}, use{Verb}{Entity}) and grouped actions (use{Entity}Actions)
+- [ ] `react/hooks/keys.ts` - exports queryKeys factories aligned with core query keys (so invalidation works)
 - [ ] `react/index.ts` - barrel export with all hooks
 
 ---
@@ -81,18 +82,7 @@ Verify the main `<project>-api.ts`:
 
 ---
 
-## 6. Verify Tests (if generated)
-
-Check `__tests__/` directory:
-
-- [ ] `<project>-api.test.ts` exists
-- [ ] Tests cover `create()` for each template
-- [ ] Tests cover each choice function
-- [ ] `vitest.config.ts` exists
-
----
-
-## 7. Create Documentation
+## 6. Create Documentation
 
 Generate `docs/SDK.md` with complete, direct documentation. No fluff. Structure:
 
@@ -138,7 +128,6 @@ Write the documentation to `<sdk-path>/docs/SDK.md`.
 ## Validation Complete
 
 When all checks pass:
-1. Run tests: `TEST_PARTY="party::id" npx vitest run`
-2. Build check: `npx tsc --build`
-3. Documentation created: `docs/SDK.md`
-4. Report success with template counts by role
+1. Build check: `npx tsc --noEmit`
+2. Documentation created: `docs/SDK.md`
+3. Report success with template counts by role

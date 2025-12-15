@@ -36,6 +36,8 @@ interface ChoiceIR {
   name: string;
   consuming: boolean;
   controllers: string[];
+  /** Raw argument type for this choice (from daml-js typings, simplified) */
+  argsType: string;
   params: FieldIR[];
   returnType: string;
   /** Templates created by this choice (for classification) */
@@ -147,7 +149,13 @@ function buildTemplateIR(
     modulePath: string;
     name: string;
     fields: Array<{ name: string; type: string }>;
-    choices: Array<{ name: string; args: string; result: string; consuming?: boolean }>;
+    choices: Array<{
+      name: string;
+      argsType: string;
+      argsFields?: Array<{ name: string; type: string }>;
+      result: string;
+      consuming?: boolean;
+    }>;
   }
 ): TemplateIR {
   const fields: FieldIR[] = parsed.fields.map(f => ({
@@ -159,7 +167,8 @@ function buildTemplateIR(
     name: c.name,
     consuming: c.consuming ?? true,
     controllers: [],
-    params: [],
+    argsType: c.argsType,
+    params: (c.argsFields ?? []).map(f => ({ name: f.name, type: f.type })),
     returnType: c.result,
     createsTemplates: extractCreatedTemplates(c.result),
     archivesSelf: c.consuming ?? true,
@@ -191,6 +200,18 @@ function extractCreatedTemplates(returnType: string): string[] {
   const matches = returnType.match(/ContractId<(\w+)>/g);
   if (!matches) return [];
   return matches.map(m => m.replace(/ContractId<|>/g, ''));
+}
+
+function isEmptyChoiceArgsType(argsType: string): boolean {
+  const t = argsType.trim();
+  return (
+    t === '' ||
+    t === '{}' ||
+    t === 'void' ||
+    t === 'Unit' ||
+    t === 'Record<string, never>' ||
+    t === 'Record<string, never> | undefined'
+  );
 }
 
 function sanitizeReturnType(returnType: string): string {
@@ -420,9 +441,10 @@ export type Date = string;
 export type Numeric = string;
 
 /**
- * Integer number.
+ * Integer number represented as string.
+ * Daml JSON encodes Int values as strings to preserve precision.
  */
-export type Int = number;
+export type Int = string;
 
 /**
  * Text string.
@@ -443,6 +465,12 @@ export type Unit = Record<string, never>;
  * String-keyed map/dictionary.
  */
 export type TextMap<V> = Record<string, V>;
+
+/**
+ * Generic Daml Map<K, V> representation.
+ * Daml JSON API encodes Map as an array of key/value pairs.
+ */
+export type DamlMap<K, V> = Array<[K, V]>;
 
 /**
  * Set represented as array (Daml sets serialize as arrays).
@@ -585,7 +613,7 @@ class CantonApiGenerator {
     console.log(`   - .env.example`);
     console.log(`   - core/primitives.ts, interfaces.ts, index.ts`);
     console.log(`   - ledger/config.ts, client.ts, errors.ts, retry.ts, streaming.ts, resolver.ts, index.ts`);
-    console.log(`   - utils/amounts.ts, ids.ts, datetime.ts, index.ts`);
+    console.log(`   - utils/amounts.ts, ids.ts, datetime.ts, damlMap.ts, index.ts`);
     console.log(`   - ${this.projectName}-api.ts\n`);
   }
 
@@ -752,8 +780,18 @@ class CantonApiGenerator {
     return fields;
   }
 
-  private extractTemplateChoices(content: string, templateName: string): Array<{ name: string; args: string; result: string }> {
-    const choices: Array<{ name: string; args: string; result: string }> = [];
+  private extractTemplateChoices(content: string, templateName: string): Array<{
+    name: string;
+    argsType: string;
+    argsFields?: Array<{ name: string; type: string }>;
+    result: string;
+  }> {
+    const choices: Array<{
+      name: string;
+      argsType: string;
+      argsFields?: Array<{ name: string; type: string }>;
+      result: string;
+    }> = [];
 
     // Match interface declaration for choices
     // Use [\s\S]*? to match any character including newlines, and stop at } followed by 
@@ -775,10 +813,17 @@ class CantonApiGenerator {
         const choiceName = choiceMatch[1];
         if (choiceName === 'Archive') continue; // Skip Archive, it's standard
 
+        const argsType = this.simplifyType(choiceMatch[2].trim());
+        const argsFields =
+          isEmptyChoiceArgsType(argsType) || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(argsType)
+            ? []
+            : this.extractChoiceArgsFields(content, argsType);
+
         choices.push({
           name: choiceName,
-          args: this.simplifyType(choiceMatch[2].trim()),
-          result: this.simplifyComplexResult(choiceMatch[3].trim())
+          argsType,
+          argsFields,
+          result: this.simplifyComplexResult(choiceMatch[3].trim()),
         });
       }
     }
@@ -901,12 +946,17 @@ class CantonApiGenerator {
     result = result.replace(/damlTypes\.Bool/g, 'Bool');
     result = result.replace(/damlTypes\.Optional/g, 'Optional');
 
-    // Handle damlTypes.Map to Record conversion
-    result = result.replace(/damlTypes\.Map<([^,]+),\s*([^>]+)>/g, 'Record<$1, $2>');
+    // Handle Daml map types:
+    // - TextMap: JSON object keyed by string
+    // - Map: JSON array of [key, value] pairs
+    result = result.replace(/damlTypes\.TextMap/g, 'TextMap');
+    result = result.replace(/damlTypes\.Map<([^,]+),\s*([^>]+)>/g, 'DamlMap<$1, $2>');
+    // Some daml-js typings expose Map without the damlTypes. prefix
+    result = result.replace(/\bMap</g, 'DamlMap<');
 
-    // Simplify Map<string, Set<Party>> to Record<string, Party[]>
-    result = result.replace(/Map<string,\s*DA\.Set\.Types\.Set<Party>>/g, 'Record<string, Party[]>');
-    result = result.replace(/Map<string,\s*Set<Party>>/g, 'Record<string, Party[]>');
+    // Simplify DamlMap<string, Set<Party>> to DamlMap<string, Party[]>
+    result = result.replace(/DamlMap<string,\s*DA\.Set\.Types\.Set<Party>>/g, 'DamlMap<string, Party[]>');
+    result = result.replace(/DamlMap<string,\s*Set<Party>>/g, 'DamlMap<string, Party[]>');
 
     // Simplify Set<Party> to Party[]
     result = result.replace(/DA\.Set\.Types\.Set<Party>/g, 'Party[]');
@@ -1196,16 +1246,20 @@ export interface PeriodicSchedule {
 // ENUMS (Opaque types - actual values depend on Daml model)
 // ═══════════════════════════════════════════════════════════════
 
-export type HoldingStandard = { tag: string; value?: unknown };
-export type LockType = { tag: string; value?: unknown };
-export type Allocation = { tag: string; value?: unknown };
-export type Approval = { tag: string; value?: unknown };
-export type BusinessDayConventionEnum = { tag: string };
-export type DayOfWeek = { tag: string };
-export type PeriodEnum = { tag: string };
-export type DayTypeEnum = { tag: string };
-export type StubPeriodTypeEnum = { tag: string };
-export type RollConventionEnum = { tag: string };
+// NOTE: Daml JSON encodes enums as strings (not { tag, value } objects).
+// Variants encode as { tag, value }. We model these as strings because Daml Finance commonly uses enums here.
+export type HoldingStandard = string;
+export type LockType = string;
+// Allocation / Approval can be complex Daml types depending on the model (record/variant/enum).
+// Keep them opaque to avoid encouraging the wrong JSON encoding.
+export type Allocation = unknown;
+export type Approval = unknown;
+export type BusinessDayConventionEnum = string;
+export type DayOfWeek = string;
+export type PeriodEnum = string;
+export type DayTypeEnum = string;
+export type StubPeriodTypeEnum = string;
+export type RollConventionEnum = string;
 `;
 
     const outputPath = path.join(this.outputDir, 'core', 'interfaces.ts');
@@ -1283,7 +1337,7 @@ export interface LedgerConfig {
   timeout?: number;
   /** Ledger ID for JWT claims (default: sandbox) */
   ledgerId?: string;
-  /** Application ID for JWT claims (default: vault-webapp) */
+  /** Application ID for JWT claims (default: ${this.projectName}-sdk) */
   applicationId?: string;
 }
 
@@ -1300,7 +1354,7 @@ export function createConfig(options: Partial<LedgerConfig> = {}): LedgerConfig 
     token: options.token,
     timeout: options.timeout ?? 30000,
     ledgerId: options.ledgerId ?? 'sandbox',
-    applicationId: options.applicationId ?? 'vault-webapp',
+    applicationId: options.applicationId ?? '${this.projectName}-sdk',
   };
 }
 
@@ -1321,7 +1375,7 @@ export function createConfigFromEnv(): LedgerConfig {
     token: env.LEDGER_TOKEN,
     timeout: env.LEDGER_TIMEOUT ? parseInt(env.LEDGER_TIMEOUT, 10) : undefined,
     ledgerId: env.LEDGER_ID || 'sandbox',
-    applicationId: env.APPLICATION_ID || 'vault-webapp',
+    applicationId: env.APPLICATION_ID || '${this.projectName}-sdk',
   });
 }
 
@@ -1335,7 +1389,7 @@ export function createConfigFromEnv(): LedgerConfig {
 export interface JwtOptions {
   /** Ledger ID - must match Canton config (default: "sandbox") */
   ledgerId?: string;
-  /** Application identifier (default: "vault-webapp") */
+  /** Application identifier (default: "${this.projectName}-sdk") */
   applicationId?: string;
   /** Token expiration in seconds (default: 86400 = 24h) */
   expiresIn?: number;
@@ -1367,7 +1421,7 @@ export function createJwtToken(party: string, options: JwtOptions = {}): string 
       ledgerId: options.ledgerId || 'sandbox',
       actAs: [party],
       readAs: [party],
-      applicationId: options.applicationId || 'vault-webapp',
+      applicationId: options.applicationId || '${this.projectName}-sdk',
     },
     exp: Math.floor(Date.now() / 1000) + (options.expiresIn || 86400),
     iat: Math.floor(Date.now() / 1000),
@@ -1377,8 +1431,17 @@ export function createJwtToken(party: string, options: JwtOptions = {}): string 
   // Must replace: = with nothing, + with -, / with _
   const base64url = (obj: unknown): string => {
     const json = JSON.stringify(obj);
-    const base64 = btoa(json);
-    return base64.replace(/=/g, '').replace(/\\\\+/g, '-').replace(/\\\\//g, '_');
+    const g = globalThis as any;
+    let base64: string;
+    if (g.Buffer?.from) {
+      base64 = g.Buffer.from(json, 'utf8').toString('base64');
+    } else if (typeof btoa !== 'undefined') {
+      // btoa expects latin1; encode UTF-8 first
+      base64 = btoa(unescape(encodeURIComponent(json)));
+    } else {
+      throw new Error('No base64 encoder available');
+    }
+    return base64.replace(/=/g, '').replace(/\\+/g, '-').replace(/\\//g, '_');
   };
   
   // Format: header.payload. (trailing dot = empty signature, required!)
@@ -1407,6 +1470,13 @@ import type {
   ExerciseResult,
   Party
 } from '../core/primitives';
+import {
+  ConnectionError,
+  TimeoutError,
+  UnauthorizedError,
+  LedgerError,
+  LedgerErrorCode,
+} from './errors';
 
 // ═══════════════════════════════════════════════════════════════
 // CANTON LEDGER CLIENT
@@ -1473,7 +1543,8 @@ export class CantonLedgerClient implements LedgerConnection {
       applicationId = config.applicationId;
     }
 
-    this.baseUrl = resolvedUrl;
+    // Normalize to avoid double slashes when concatenating paths
+    this.baseUrl = resolvedUrl.endsWith('/') ? resolvedUrl.slice(0, -1) : resolvedUrl;
     this.timeout = resolvedTimeout;
     
     // Auto-generate JWT if no token provided (required for Canton sandbox)
@@ -1507,30 +1578,116 @@ export class CantonLedgerClient implements LedgerConnection {
   }
 
   /**
+   * Perform a JSON API request with timeout, returning the unwrapped result.
+   * The JSON API wraps responses in { status, result } or { status, errors }.
+   */
+  private async requestJson<T>(path: string, init: RequestInit): Promise<T> {
+    const controller = new AbortController();
+    const timeoutMs = Math.max(1, this.timeout || 30000);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const response = await fetch(this.baseUrl + path, {
+        ...init,
+        headers: {
+          ...this.headers,
+          ...(init.headers as Record<string, string> | undefined),
+        },
+        signal: controller.signal,
+      });
+
+      const text = await response.text();
+      let payload: unknown = null;
+      if (text) {
+        try {
+          payload = JSON.parse(text);
+        } catch {
+          payload = text;
+        }
+      }
+
+      const unwrap = (obj: unknown): unknown => {
+        if (obj && typeof obj === 'object' && 'result' in (obj as Record<string, unknown>)) {
+          return (obj as { result: unknown }).result;
+        }
+        return obj;
+      };
+
+      // Some JSON API deployments return 200 with an errors field.
+      // Treat that as a failure even if HTTP status is OK.
+      if (payload && typeof payload === 'object') {
+        const record = payload as Record<string, unknown>;
+        if ('errors' in record && record.errors) {
+          throw new LedgerError(
+            path + ' failed: ' + JSON.stringify(record.errors),
+            LedgerErrorCode.INVALID_ARGUMENT,
+            record.errors
+          );
+        }
+      }
+
+      if (!response.ok) {
+        const details = payload;
+        const msg = (() => {
+          if (details && typeof details === 'object') {
+            const record = details as Record<string, unknown>;
+            if ('errors' in record) return JSON.stringify(record.errors);
+            if ('ledgerApiError' in record) return JSON.stringify(record.ledgerApiError);
+          }
+          return typeof details === 'string' ? details : JSON.stringify(details);
+        })();
+
+        if (response.status === 401 || response.status === 403) {
+          throw new UnauthorizedError(msg || ('Unauthorized (' + response.status + ')'), details);
+        }
+        if (response.status === 504) {
+          throw new TimeoutError(msg || 'Request timed out', details);
+        }
+
+        const code =
+          response.status >= 500
+            ? LedgerErrorCode.CONNECTION_FAILED
+            : LedgerErrorCode.INVALID_ARGUMENT;
+
+        throw new LedgerError(path + ' failed: ' + response.status + ' - ' + msg, code, details);
+      }
+
+      return unwrap(payload) as T;
+    } catch (error) {
+      if (error instanceof LedgerError) {
+        throw error;
+      }
+
+      if (error && typeof error === 'object' && (error as { name?: string }).name === 'AbortError') {
+        throw new TimeoutError('Request timed out');
+      }
+
+      throw new ConnectionError('Network error connecting to ledger', error);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
    * Query contracts by template ID with optional filter.
    * Template IDs are automatically resolved from package names to hashes.
    */
   async query<T>(templateId: string, filter?: Partial<T>): Promise<Contract<T>[]> {
     // Resolve package name to hash
     const resolvedTemplateId = await this.resolveTemplateId(templateId);
-    
-    const response = await fetch(\`\${this.baseUrl}/v1/query\`, {
-      method: 'POST',
-      headers: this.headers,
-      body: JSON.stringify({
-        templateIds: [resolvedTemplateId],
-        query: filter || {},
-        readers: [this.party],
-      }),
-    });
 
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(\`Query failed: \${response.status} - \${error}\`);
-    }
+    const result = await this.requestJson<Array<{ contractId: string; payload: T; createdAt?: string }>>(
+      '/v1/query',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          templateIds: [resolvedTemplateId],
+          query: filter || {},
+        }),
+      }
+    );
 
-    const data = await response.json() as { result?: Array<{ contractId: string; payload: T; createdAt?: string }> };
-    return (data.result || []).map((item) => ({
+    return (result || []).map((item) => ({
       contractId: item.contractId as ContractId<T>,
       payload: item.payload,
       createdAt: item.createdAt,
@@ -1544,10 +1701,9 @@ export class CantonLedgerClient implements LedgerConnection {
   async create<T>(templateId: string, payload: T): Promise<ContractId<T>> {
     // Resolve package name to hash
     const resolvedTemplateId = await this.resolveTemplateId(templateId);
-    
-    const response = await fetch(\`\${this.baseUrl}/v1/create\`, {
+
+    const result = await this.requestJson<{ contractId: string }>('/v1/create', {
       method: 'POST',
-      headers: this.headers,
       body: JSON.stringify({
         templateId: resolvedTemplateId,
         payload,
@@ -1557,13 +1713,7 @@ export class CantonLedgerClient implements LedgerConnection {
       }),
     });
 
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(\`Create failed: \${response.status} - \${error}\`);
-    }
-
-    const data = await response.json() as { result: { contractId: string } };
-    return data.result.contractId as ContractId<T>;
+    return result.contractId as ContractId<T>;
   }
 
   /**
@@ -1578,10 +1728,9 @@ export class CantonLedgerClient implements LedgerConnection {
   ): Promise<ExerciseResult<R>> {
     // Resolve package name to hash
     const resolvedTemplateId = await this.resolveTemplateId(templateId);
-    
-    const response = await fetch(\`\${this.baseUrl}/v1/exercise\`, {
+
+    const data = await this.requestJson<{ exerciseResult: R; events?: unknown[] }>('/v1/exercise', {
       method: 'POST',
-      headers: this.headers,
       body: JSON.stringify({
         templateId: resolvedTemplateId,
         contractId,
@@ -1593,15 +1742,9 @@ export class CantonLedgerClient implements LedgerConnection {
       }),
     });
 
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(\`Exercise failed: \${response.status} - \${error}\`);
-    }
-
-    const data = await response.json() as { result: { exerciseResult: R; events?: unknown[] } };
     return {
-      exerciseResult: data.result.exerciseResult,
-      events: data.result.events || [],
+      exerciseResult: data.exerciseResult,
+      events: data.events || [],
     };
   }
 
@@ -1609,28 +1752,20 @@ export class CantonLedgerClient implements LedgerConnection {
    * Fetch a specific contract by ID.
    */
   async fetch<T>(contractId: ContractId<T>): Promise<Contract<T> | null> {
-    const response = await fetch(\`\${this.baseUrl}/v1/fetch\`, {
-      method: 'POST',
-      headers: this.headers,
-      body: JSON.stringify({
-        contractId,
-        readers: [this.party],
-      }),
-    });
+    // JSON API returns 200 with { result: null } when not found
+    const data = await this.requestJson<{ contractId: string; payload: T; createdAt?: string } | null>(
+      '/v1/fetch',
+      {
+        method: 'POST',
+        body: JSON.stringify({ contractId }),
+      }
+    );
 
-    if (!response.ok) {
-      if (response.status === 404) return null;
-      const error = await response.text();
-      throw new Error(\`Fetch failed: \${response.status} - \${error}\`);
-    }
-
-    const data = await response.json() as { result?: { contractId: string; payload: T; createdAt?: string } };
-    if (!data.result) return null;
-
+    if (!data) return null;
     return {
-      contractId: data.result.contractId as ContractId<T>,
-      payload: data.result.payload,
-      createdAt: data.result.createdAt,
+      contractId: data.contractId as ContractId<T>,
+      payload: data.payload,
+      createdAt: data.createdAt,
     };
   }
 }
@@ -1646,7 +1781,7 @@ export class CantonLedgerClient implements LedgerConnection {
  */
 export function createLedgerClient(party: Party, config?: Partial<LedgerConfig>): CantonLedgerClient {
   const fullConfig = createConfig(config);
-  return new CantonLedgerClient(party, fullConfig.ledgerUrl, fullConfig.token);
+  return new CantonLedgerClient(party, fullConfig);
 }
 
 /**
@@ -1656,20 +1791,10 @@ export function createLedgerClient(party: Party, config?: Partial<LedgerConfig>)
 export async function isLedgerReachable(config?: Partial<LedgerConfig>): Promise<boolean> {
   try {
     const fullConfig = createConfig(config);
-    // Generate JWT if no token provided (required for Canton sandbox)
-    const token = fullConfig.token || createJwtToken('admin', {
-      ledgerId: fullConfig.ledgerId,
-      applicationId: fullConfig.applicationId,
-    });
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      'Authorization': \`Bearer \${token}\`,
-    };
-    const response = await fetch(\`\${fullConfig.ledgerUrl}/v1/parties\`, {
-      method: 'GET',
-      headers,
-    });
-    return response.ok;
+    // Reachability check should NOT depend on having a token or a known party.
+    // Treat 401/403 as "reachable but unauthorized".
+    const response = await fetch(\`\${fullConfig.ledgerUrl}/v1/packages\`, { method: 'GET' });
+    return response.ok || response.status === 401 || response.status === 403;
   } catch {
     return false;
   }
@@ -1681,11 +1806,14 @@ export async function isLedgerReachable(config?: Partial<LedgerConfig>): Promise
  */
 export async function getParties(config?: Partial<LedgerConfig>): Promise<Party[]> {
   const fullConfig = createConfig(config);
-  // Generate JWT if no token provided (required for Canton sandbox)
-  const token = fullConfig.token || createJwtToken('admin', {
-    ledgerId: fullConfig.ledgerId,
-    applicationId: fullConfig.applicationId,
-  });
+  const token = fullConfig.token;
+  if (!token) {
+    throw new Error(
+      'getParties requires config.token (LEDGER_TOKEN). ' +
+        'The Canton JSON API requires a Bearer token even to list parties. ' +
+        'See the generated SDK README section \"JSON API Auth (curl)\" for a copy-pasteable token snippet.'
+    );
+  }
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'Authorization': \`Bearer \${token}\`,
@@ -2203,9 +2331,23 @@ export class PackageResolver {
           }),
         });
         
-        // 200 means the template exists in this package
+        // Canton JSON API may return HTTP 200 even when the body contains errors.
+        // Only treat it as success if the response body has no errors.
         if (response.ok) {
-          // Cache the mapping for future use
+          const data = await response.json().catch(() => null) as
+            | { errors?: unknown; result?: unknown }
+            | null;
+
+          const errorsValue = data && typeof data === 'object' ? (data as { errors?: unknown }).errors : undefined;
+          const hasErrors =
+            Array.isArray(errorsValue) ? errorsValue.length > 0 : !!errorsValue;
+
+          if (hasErrors) {
+            // Wrong package hash for this template, try next
+            continue;
+          }
+
+          // Success - cache mapping for future use
           this.packageCache.set(packageName, hash);
           console.log(\`PackageResolver: Resolved "\${packageName}" -> "\${hash.substring(0, 8)}..."\`);
           return testId;
@@ -2294,6 +2436,7 @@ export function createPackageResolver(): PackageResolver {
     this.generateUtilsAmounts();
     this.generateUtilsIds();
     this.generateUtilsDatetime();
+    this.generateUtilsDamlMap();
     this.generateUtilsIndex();
   }
 
@@ -2374,7 +2517,7 @@ export function createInstrumentKey(
     issuer,
     id: createId(id),
     version,
-    holdingStandard: { tag: 'TransferableFungible' },
+    holdingStandard: 'TransferableFungible',
   };
 }
 
@@ -2429,6 +2572,63 @@ export function nowAsCantonTime(): Time {
     console.log(`   ✓ utils/datetime.ts`);
   }
 
+  private generateUtilsDamlMap(): void {
+    const output = `// utils/damlMap.ts
+// Helpers for working with DamlMap<K, V> (array-of-pairs)
+// DO NOT EDIT - Generated by generate-canton-api.ts
+
+import type { DamlMap } from '../core/primitives';
+
+/**
+ * Convert a Record<string, V> to a DamlMap<string, V>.
+ * NOTE: Duplicates are not possible in a Record.
+ */
+export function damlMapFromRecord<V>(record: Record<string, V>): DamlMap<string, V> {
+  return Object.entries(record) as DamlMap<string, V>;
+}
+
+/**
+ * Convert a DamlMap<string, V> to a Record<string, V>.
+ * NOTE: If the DamlMap contains duplicate keys, the last value wins.
+ */
+export function damlMapToRecord<V>(map: DamlMap<string, V>): Record<string, V> {
+  return Object.fromEntries(map) as Record<string, V>;
+}
+
+/** Get a value from a DamlMap using strict equality on keys. */
+export function damlMapGet<K, V>(map: DamlMap<K, V>, key: K): V | undefined {
+  for (const [k, v] of map) {
+    if (k === key) return v;
+  }
+  return undefined;
+}
+
+/** Set a value in a DamlMap (returns a new map). */
+export function damlMapSet<K, V>(map: DamlMap<K, V>, key: K, value: V): DamlMap<K, V> {
+  const out: Array<[K, V]> = [];
+  let replaced = false;
+  for (const [k, v] of map) {
+    if (k === key) {
+      out.push([key, value]);
+      replaced = true;
+    } else {
+      out.push([k, v]);
+    }
+  }
+  if (!replaced) out.push([key, value]);
+  return out as DamlMap<K, V>;
+}
+
+/** Delete a key from a DamlMap (returns a new map). */
+export function damlMapDelete<K, V>(map: DamlMap<K, V>, key: K): DamlMap<K, V> {
+  return map.filter(([k]) => k !== key) as DamlMap<K, V>;
+}
+`;
+    const outputPath = path.join(this.outputDir, 'utils', 'damlMap.ts');
+    fs.writeFileSync(outputPath, output);
+    console.log(`   ✓ utils/damlMap.ts`);
+  }
+
   private generateUtilsIndex(): void {
     const output = `// utils/index.ts
 // Re-exports all utilities
@@ -2437,6 +2637,7 @@ export function nowAsCantonTime(): Time {
 export * from './amounts';
 export * from './ids';
 export * from './datetime';
+export * from './damlMap';
 `;
     const outputPath = path.join(this.outputDir, 'utils', 'index.ts');
     fs.writeFileSync(outputPath, output);
@@ -2506,7 +2707,7 @@ export {
 // Import this file to interact with the Canton ledger.
 
 import {
-  Party, ContractId, Optional, Numeric, Time, Command, Contract, ExerciseResult
+  Party, ContractId, Optional, Numeric, Time, Command, Contract, ExerciseResult, DamlMap
 } from './core/primitives';
 import {
   AccountKey, InstrumentKey, HoldingFactoryKey, Quantity, Id, Controllers,
@@ -2558,7 +2759,7 @@ export interface Holding {
   account: AccountKey;
   amount: Numeric;
   lock: Optional<Lock>;
-  observers: Record<string, Party[]>;
+  observers: DamlMap<string, Party[]>;
 }
 
 /**
@@ -2610,7 +2811,7 @@ export interface Instruction {
   approval: Approval;
   signedSenders: Party[];
   signedReceivers: Party[];
-  observers: Record<string, Party[]>;
+  observers: DamlMap<string, Party[]>;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -2628,7 +2829,7 @@ export interface Account {
   id: Id;
   description: string;
   holdingFactory: HoldingFactoryKey;
-  observers: Record<string, Party[]>;
+  observers: DamlMap<string, Party[]>;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -2646,7 +2847,7 @@ export interface Instrument {
   holdingStandard: HoldingStandard;
   description: string;
   validAsOf: Time;
-  observers: Record<string, Party[]>;
+  observers: DamlMap<string, Party[]>;
 }
 
 /**
@@ -2729,7 +2930,7 @@ export const MockFactories = {
     issuer,
     id: { unpack: id },
     version,
-    holdingStandard: { tag: 'TransferableFungible' }
+    holdingStandard: 'TransferableFungible'
   }),
 
   /**
@@ -2817,7 +3018,8 @@ export namespace ${namespaceName} {
     // Generate a function for each choice (except Archive)
     for (const choice of meaningfulChoices) {
       const fnName = this.toChoiceFunctionName(choice.name);
-      const hasArgs = choice.params && choice.params.length > 0;
+      const hasArgs = !isEmptyChoiceArgsType(choice.argsType);
+      const hasParsedArgs = choice.params && choice.params.length > 0;
       const returnType = sanitizeReturnType(choice.returnType);
 
       if (hasArgs) {
@@ -2825,7 +3027,9 @@ export namespace ${namespaceName} {
   /** Exercise ${choice.name} choice */
   export function ${fnName}(
     contractId: ContractId<Payload>,
-    args: { ${choice.params.map(p => `${p.name}: ${p.type}`).join('; ')} }
+    args: ${hasParsedArgs
+      ? `{\n${choice.params.map(p => `      ${p.name}: ${p.type};`).join('\n')}\n    }`
+      : `Record<string, unknown> /* Unparsed args type: ${choice.argsType} */`}
   ): Command<${returnType}> {
     return {
       templateId: TemplateIds.${templateIdKey},
@@ -3021,6 +3225,45 @@ LEDGER_PORT=7575
 LEDGER_TOKEN=  # Optional JWT token
 \`\`\`
 
+## JSON API Auth (curl)
+
+The Canton JSON API requires an OAuth2 Bearer token (JWT).
+This SDK auto-generates an **unsigned dev token** for sandbox if you don't provide \`LEDGER_TOKEN\`.
+
+If you want to test the JSON API manually with curl:
+
+\`\`\`bash
+export PARTY="Alice::1220..."  # use a real party id from /v1/parties
+
+TOKEN="$(node -e '
+  const party = process.env.PARTY;
+  if (!party) throw new Error(\"PARTY env var required\");
+  const header = { alg: \"none\", typ: \"JWT\" };
+  const payload = {
+    \"https://daml.com/ledger-api\": {
+      ledgerId: \"sandbox\",
+      actAs: [party],
+      readAs: [party],
+      applicationId: \"${this.projectName}-sdk\",
+    },
+    exp: Math.floor(Date.now() / 1000) + 86400,
+    iat: Math.floor(Date.now() / 1000),
+  };
+  const b64 = (obj) =>
+    Buffer.from(JSON.stringify(obj), \"utf8\")
+      .toString(\"base64\")
+      .replace(/=/g, \"\")
+      .replace(/\\+/g, \"-\")
+      .replace(/\\//g, \"_\");
+  process.stdout.write(b64(header) + \".\" + b64(payload) + \".\");
+')"
+
+# IMPORTANT:
+# - keep the trailing dot (unsigned JWT)
+# - keep the header in double quotes (avoid shell mangling)
+curl -s -H \"Authorization: Bearer \${TOKEN}\" http://localhost:7575/v1/packages
+\`\`\`
+
 ## Quick Start
 
 ### Creating Contracts
@@ -3045,7 +3288,12 @@ const contractId = await ledger.create(cmd.templateId, cmd.argument);
 ${exampleTemplate && exampleTemplate.choices.filter(c => c.name !== 'Archive').length > 0 ? `\`\`\`typescript
 // Exercise a choice
 const choiceCmd = ${exampleTemplate.qualifiedName}.${this.toChoiceFunctionName(exampleTemplate.choices.filter(c => c.name !== 'Archive')[0]?.name || 'accept')}(contractId);
-await ledger.exercise(choiceCmd.contractId, choiceCmd.choice, choiceCmd.argument);
+await ledger.exercise(
+  choiceCmd.templateId,
+  contractId,
+  choiceCmd.choice!,
+  choiceCmd.argument
+);
 \`\`\`
 ` : ''}
 ### Querying Contracts
@@ -3162,4 +3410,6 @@ function main(): void {
   generator.generate();
 }
 
-main();
+if (require.main === module) {
+  main();
+}

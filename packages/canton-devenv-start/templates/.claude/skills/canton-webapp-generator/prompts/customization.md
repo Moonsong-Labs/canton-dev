@@ -17,9 +17,9 @@ Do NOT create components that say "Coming soon" or hooks that return fake data. 
 
 ---
 
-## 1. Discover Templates
+## 1. Discover Templates AND Choices
 
-Read the SDK's `<project-name>-api.ts` to find available templates:
+Read the SDK's `<project-name>-api.ts` to find ALL available templates AND their choices:
 
 ```typescript
 // In sdk/<project-name>-api.ts, look for:
@@ -28,7 +28,7 @@ export const TemplateIds = {
   // ... more templates
 };
 
-// Each template has a namespace:
+// Each template has a namespace with Payload, create, and CHOICES:
 export namespace MyModule_MyTemplate {
   export interface Payload {
     field1: Party;
@@ -36,15 +36,21 @@ export namespace MyModule_MyTemplate {
     // ... fields
   }
   export function create(payload: Payload): Command<Payload>;
-  export function someChoice(contractId: ContractId<Payload>): Command<Result>;
+
+  // CHOICES - every exported function except 'create' is a choice:
+  export function Accept(contractId: ContractId<Payload>): Command<Unit>;
+  export function Transfer(contractId: ContractId<Payload>, newOwner: Party): Command<ContractId<Payload>>;
+  export function Archive(contractId: ContractId<Payload>): Command<Unit>;
 }
 ```
+
+**CRITICAL**: You MUST discover and implement hooks for ALL choices, not just a subset. Parse each template namespace and identify every exported function that is not `create`.
 
 ---
 
 ## 2. Create Domain Hooks
 
-In `src/hooks/useContracts.ts`, wrap generic hooks with domain types:
+In `src/hooks/useContracts.ts`, create hooks for **each template AND each choice discovered**:
 
 ```typescript
 import { TemplateIds, MyModule_MyTemplate } from '@sdk/<project-name>-api';
@@ -52,7 +58,7 @@ import { useContractQuery, useCreateContract, useExerciseChoice } from './useLed
 import { useAuth } from './useAuth';
 import { QUERY_KEYS } from '@/lib/constants';
 
-// Query hook
+// Query hook for template
 export function useMyContracts(filter?: Partial<MyModule_MyTemplate.Payload>) {
   return useContractQuery<MyModule_MyTemplate.Payload>(
     TemplateIds.MyModule_MyTemplate,
@@ -73,7 +79,9 @@ export function useCreateMyContract() {
   );
 }
 
-// Exercise choice hook
+// IMPORTANT: Create a hook for EVERY choice discovered in the SDK
+// If SDK has Accept, Transfer, Archive choices, create ALL of them:
+
 export function useAcceptMyContract() {
   const { party } = useAuth();
   return useExerciseChoice(
@@ -86,6 +94,34 @@ export function useAcceptMyContract() {
     }
   );
 }
+
+export function useTransferMyContract() {
+  const { party } = useAuth();
+  return useExerciseChoice(
+    TemplateIds.MyModule_MyTemplate,
+    'Transfer',
+    {
+      invalidateKeys: [
+        QUERY_KEYS.contracts(TemplateIds.MyModule_MyTemplate, party || undefined),
+      ],
+    }
+  );
+}
+
+export function useArchiveMyContract() {
+  const { party } = useAuth();
+  return useExerciseChoice(
+    TemplateIds.MyModule_MyTemplate,
+    'Archive',
+    {
+      invalidateKeys: [
+        QUERY_KEYS.contracts(TemplateIds.MyModule_MyTemplate, party || undefined),
+      ],
+    }
+  );
+}
+
+// Repeat for EVERY choice in the SDK - do not skip any!
 ```
 
 ---
@@ -173,23 +209,30 @@ export function CreateMyContract() {
 
 ### Detail with Actions Pattern
 
+**IMPORTANT**: Include buttons for ALL choices discovered in the SDK, not just one or two.
+
 ```typescript
 // src/features/mycontracts/MyContractDetail.tsx
 import { useParams } from 'react-router-dom';
-import { useMyContracts, useAcceptMyContract } from '@/hooks/useContracts';
+import {
+  useMyContracts,
+  useAcceptMyContract,
+  useTransferMyContract,
+  useArchiveMyContract
+} from '@/hooks/useContracts';
 import { Card, Button } from '@/components/ui';
 
 export function MyContractDetail() {
   const { id } = useParams<{ id: string }>();
   const { data: contracts } = useMyContracts();
+
+  // Import ALL choice hooks for this template
   const acceptMutation = useAcceptMyContract();
+  const transferMutation = useTransferMyContract();
+  const archiveMutation = useArchiveMyContract();
 
   const contract = contracts?.find((c) => c.contractId === id);
   if (!contract) return <p>Contract not found</p>;
-
-  const handleAccept = () => {
-    acceptMutation.mutate({ contractId: contract.contractId });
-  };
 
   return (
     <Card>
@@ -197,9 +240,30 @@ export function MyContractDetail() {
       <pre className="text-sm text-slate-300 mb-4">
         {JSON.stringify(contract.payload, null, 2)}
       </pre>
-      <Button onClick={handleAccept} loading={acceptMutation.isPending}>
-        Accept
-      </Button>
+
+      {/* Include a button for EVERY choice available on this template */}
+      <div className="flex gap-2 flex-wrap">
+        <Button
+          onClick={() => acceptMutation.mutate({ contractId: contract.contractId })}
+          loading={acceptMutation.isPending}
+        >
+          Accept
+        </Button>
+        <Button
+          onClick={() => transferMutation.mutate({ contractId: contract.contractId, args: { newOwner: '...' } })}
+          loading={transferMutation.isPending}
+        >
+          Transfer
+        </Button>
+        <Button
+          variant="destructive"
+          onClick={() => archiveMutation.mutate({ contractId: contract.contractId })}
+          loading={archiveMutation.isPending}
+        >
+          Archive
+        </Button>
+        {/* Add more buttons for any other choices in the SDK */}
+      </div>
     </Card>
   );
 }

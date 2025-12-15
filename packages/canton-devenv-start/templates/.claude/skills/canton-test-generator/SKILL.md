@@ -142,7 +142,7 @@ beforeAll(async () => {
   const holdingFactoryCmd = Holding_Factory.create({
     provider: operator,
     id: { unpack: "Holding Factory" },
-    observers: [] as unknown as Record<string, Party[]>
+    observers: []
   });
   const holdingFactoryCid = await operatorLedger.create(holdingFactoryCmd.templateId, holdingFactoryCmd.argument);
 
@@ -150,7 +150,7 @@ beforeAll(async () => {
   const holdingFactoryRefCmd = Holding_Factory_Reference.create({
     factoryView: { provider: operator, id: { unpack: "Holding Factory" } } as any,
     cid: holdingFactoryCid as any,
-    observers: [] as unknown as Record<string, Party[]>
+    observers: []
   });
   await operatorLedger.create(holdingFactoryRefCmd.templateId, holdingFactoryRefCmd.argument);
 
@@ -209,12 +209,24 @@ For each `.daml` file in `Scripts/tests/`:
 5. **Map parties** - DAML party names become environment variables (e.g. `alice` → `process.env.ALICE_PARTY`)
 6. **Verify the same outcome** - the test should assert that the final state matches what the DAML script expects
 
+### Fee / Net vs Gross Assertions (Common Pitfall)
+
+If a workflow charges fees, do **not** assume “vault assets decrease by what the user received”.
+Often:
+- **User payout** is **net** (after fee)
+- **State like totalAssets** moves by the **gross** amount (before fee), depending on the model
+
+Derive expectations from the DAML logic / returned values to avoid off‑by‑fee errors.
+
 ### Test Independence
 
 Each test should be **runnable independently** where possible:
 - If a test depends on prior state (e.g., redemption requires a prior deposit), either:
   - Create the required state in the test's own `beforeAll`
   - OR clearly document the dependency and required test order
+
+**IMPORTANT**: Test file execution order is not guaranteed. Prefer making each test self-contained.
+If you must enforce order (last resort), prefix filenames with numbers (e.g., `01_`, `02_`, `03_`).
 
 ### Setup Verification
 
@@ -371,26 +383,36 @@ const result = await ledger.exercise(
 const accountKey = result.exerciseResult as AccountKey;
 ```
 
-#### 6. Daml Enum Types
+#### 6. Daml Enum vs Variant JSON Encoding (CRITICAL)
 
-Daml enums are serialized as tagged objects, not strings:
+Daml has **enums** and **variants** and they serialize differently in the JSON API:
+
+- **Enums** (no payload) serialize as **strings**:
+  - JSON: `"TransferableFungible"`
+- **Variants** (sum types) serialize as **objects**:
+  - JSON: `{ "tag": "Constructor", "value": <payload> }`
+  - If the constructor has no payload, the JSON may be `{ "tag": "Constructor" }`
+
+**Daml Finance note**: `HoldingStandard` is commonly an **enum** in practice, so the JSON API expects a string.
 
 ```typescript
-// Daml: data HoldingStandard = TransferableFungible | Fungible | ...
+// Example enum value (JSON: "TransferableFungible")
+const holdingStandard = "TransferableFungible" as any;
 
-// ✅ CORRECT - tagged object format
-const holdingStandard = { tag: "TransferableFungible" };
-
-// ❌ WRONG - plain string
-const holdingStandard = "TransferableFungible";  // Will fail at runtime
+// Example variant value (JSON: { tag, value })
+const someVariant = { tag: "SomeCase", value: { /* payload */ } } as any;
 ```
+
+**Rule of thumb**:
+- If the generated type looks like a **string union**, pass a string.
+- If it looks like a union of `{ tag: ... }` objects, pass the tagged object.
 
 #### 7. Type Imports
 
 Import the necessary types from the SDK:
 
 ```typescript
-import type { Id, Numeric, Party, ContractId } from '../core/primitives';
+import type { Id, Numeric, Party, ContractId, DamlMap } from '../core/primitives';
 import type { InstrumentKey, AccountKey, HoldingFactoryKey } from '../core/interfaces';
 ```
 
@@ -403,16 +425,24 @@ Daml `Map` types are serialized as arrays of key-value pairs, NOT as objects:
 // Used for: observers field in many Daml Finance templates
 
 // ✅ CORRECT - empty Map is an empty array
-const observers: [] as unknown as Record<string, Party[]> = [];
+const observers: DamlMap<string, Party[]> = [];
 
 // ✅ CORRECT - Map with entries is array of [key, value] pairs
-const observersWithData = [["label1", [party1, party2]]] as unknown as Record<string, Party[]>;
+const observersWithData: DamlMap<string, Party[]> = [["label1", [party1, party2]]];
 
 // ❌ WRONG - object format causes serialization errors
 const observers = {};  // Will fail at runtime
 ```
 
 This applies to all `observers` fields in Daml Finance templates (Account_Factory, Holding_Factory, Token_Instrument, etc.).
+
+#### 8.1 Query Filters: Avoid Enums/Variants When Possible
+
+The JSON API query predicate parser can be fragile with nested enum/variant fields inside filters.
+If a record field contains an enum/variant (e.g., `InstrumentKey.holdingStandard`), prefer **query-safe filters**:
+
+- Build a filter that omits enum/variant fields (partial record matching), e.g. `Omit<InstrumentKey, 'holdingStandard'>`
+- Or filter by primitive sub-fields (issuer/depository/id/version) rather than the entire nested record
 
 #### 9. Daml Finance Holdings Behavior
 
@@ -575,6 +605,9 @@ export default defineConfig({
     include: ['__tests__/**/*.test.ts'],
     setupFiles: ['__tests__/testSetup.ts'], // Only if testSetup.ts was created
     testTimeout: 30000,
+    // Canton often hits LOCKED_CONTRACTS if multiple files mutate shared contracts in parallel.
+    // Force files to run sequentially.
+    fileParallelism: false,
     sequence: {
       concurrent: false,
     },

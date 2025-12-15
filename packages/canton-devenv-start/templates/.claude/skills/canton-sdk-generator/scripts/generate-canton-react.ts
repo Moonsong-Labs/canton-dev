@@ -2,12 +2,13 @@
 /**
  * Canton React Hooks Generator
  *
- * Generates React Query hooks from the Canton API file.
- * Follows DX guidelines:
- *   - Action-first naming: useAcceptDeposit, not useDeposit_Accept
- *   - Grouped workflow actions: useDepositActions()
- *   - Single barrel export
- *   - Query keys for cache management
+ * Generates React Query hooks from the generated Canton API file.
+ *
+ * Design goals:
+ * - Derive templates + choices from the actual generated API namespaces (no Request/Proposal assumption)
+ * - Action-first naming: useAcceptFoo, useCreateFoo
+ * - Query keys that actually match the keys used by core hooks (so invalidation works)
+ * - Single barrel export
  *
  * Usage: npx ts-node generate-canton-react.ts <sdk-dir> <project-name>
  */
@@ -16,30 +17,34 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as ts from 'typescript';
 
-interface WorkflowInfo {
-  name: string;
-  typeName: string;
-  templateIdKey: string;
-  choices: string[];
+interface ChoiceFunctionInfo {
+  functionName: string;
+  choiceName: string;
+  hasArgs: boolean;
 }
 
-/** Information about a template namespace for generating typed hooks */
-interface TemplateInfo {
-  /** The namespace name (e.g., "Vault_Config_VaultConfig") */
+interface TemplateHooksInfo {
   namespaceName: string;
-  /** The template ID key in TemplateIds object */
   templateIdKey: string;
-  /** Whether it has a Payload interface */
-  hasPayload: boolean;
+
+  /** Unique readable template segment for hook naming (e.g., VaultConfig) */
+  hookSegment: string;
+  /** queryKeys object property name (camelCase) */
+  keyName: string;
+
+  queryHookName: string;
+  createHookName: string;
+  actionsHookName: string;
+
+  choices: ChoiceFunctionInfo[];
 }
 
 class CantonReactGenerator {
   private sdkDir: string;
   private projectName: string;
-  private workflows: WorkflowInfo[] = [];
+
   private templateIds: string[] = [];
-  /** All templates with Payload interface for typed query hooks */
-  private allTemplates: TemplateInfo[] = [];
+  private templates: TemplateHooksInfo[] = [];
 
   constructor(sdkDir: string, projectName: string) {
     this.sdkDir = sdkDir;
@@ -75,102 +80,142 @@ class CantonReactGenerator {
     const content = fs.readFileSync(apiFile, 'utf-8');
     const sourceFile = ts.createSourceFile(apiFile, content, ts.ScriptTarget.Latest, true);
 
-    // Parse TemplateIds
     this.parseTemplateIds(sourceFile);
+    this.parseTemplates(sourceFile);
+    this.assignUniqueHookNames();
 
-    // Parse all template namespaces (for typed query hooks)
-    this.parseAllTemplates(sourceFile);
-
-    // Parse workflows using AST (for mutation hooks)
-    this.parseWorkflows(sourceFile);
+    const choiceCount = this.templates.reduce((n, t) => n + t.choices.length, 0);
 
     console.log(`   Found ${this.templateIds.length} template IDs`);
-    console.log(`   Found ${this.allTemplates.length} templates with Payload`);
-    console.log(`   Found ${this.workflows.length} workflows`);
+    console.log(`   Found ${this.templates.length} templates with Payload + create()`);
+    console.log(`   Found ${choiceCount} choice functions`);
   }
 
   private parseTemplateIds(sourceFile: ts.SourceFile): void {
     ts.forEachChild(sourceFile, (node) => {
-      if (ts.isVariableStatement(node)) {
-        for (const decl of node.declarationList.declarations) {
-          if (ts.isIdentifier(decl.name) && decl.name.text === 'TemplateIds') {
-            if (decl.initializer) {
-              // Handle both direct object literal and "as const" assertion
-              let objLiteral: ts.ObjectLiteralExpression | null = null;
-              
-              if (ts.isObjectLiteralExpression(decl.initializer)) {
-                objLiteral = decl.initializer;
-              } else if (ts.isAsExpression(decl.initializer) && ts.isObjectLiteralExpression(decl.initializer.expression)) {
-                // Handle: { ... } as const
-                objLiteral = decl.initializer.expression;
-              }
-              
-              if (objLiteral) {
-                for (const prop of objLiteral.properties) {
-                  if (ts.isPropertyAssignment(prop) && ts.isIdentifier(prop.name)) {
-                    this.templateIds.push(prop.name.text);
-                  }
-                }
-              }
-            }
+      if (!ts.isVariableStatement(node)) return;
+
+      for (const decl of node.declarationList.declarations) {
+        if (!ts.isIdentifier(decl.name) || decl.name.text !== 'TemplateIds') continue;
+        if (!decl.initializer) continue;
+
+        let objLiteral: ts.ObjectLiteralExpression | null = null;
+
+        if (ts.isObjectLiteralExpression(decl.initializer)) {
+          objLiteral = decl.initializer;
+        } else if (
+          ts.isAsExpression(decl.initializer) &&
+          ts.isObjectLiteralExpression(decl.initializer.expression)
+        ) {
+          objLiteral = decl.initializer.expression;
+        }
+
+        if (!objLiteral) continue;
+
+        for (const prop of objLiteral.properties) {
+          if (ts.isPropertyAssignment(prop) && ts.isIdentifier(prop.name)) {
+            this.templateIds.push(prop.name.text);
           }
         }
       }
     });
   }
 
-  /**
-   * Parse all template namespaces that have a Payload interface.
-   * These are used to generate typed query hooks.
-   */
-  private parseAllTemplates(sourceFile: ts.SourceFile): void {
+  private parseTemplates(sourceFile: ts.SourceFile): void {
     ts.forEachChild(sourceFile, (node) => {
-      if (ts.isModuleDeclaration(node) && ts.isIdentifier(node.name)) {
-        const namespaceName = node.name.text;
+      if (!ts.isModuleDeclaration(node) || !ts.isIdentifier(node.name)) return;
 
-        // Skip utility namespaces that aren't templates
-        if (namespaceName === 'Query' || namespaceName === 'TypeGuards' || namespaceName === 'MockFactories') {
-          return;
-        }
-
-        if (node.body && ts.isModuleBlock(node.body)) {
-          let hasPayload = false;
-
-          // Look for Payload interface
-          for (const member of node.body.statements) {
-            if (ts.isInterfaceDeclaration(member) && ts.isIdentifier(member.name)) {
-              if (member.name.text === 'Payload') {
-                hasPayload = true;
-                break;
-              }
-            }
-          }
-
-          if (hasPayload) {
-            // Find matching template ID key
-            const templateIdKey = this.findTemplateIdKeyForNamespace(namespaceName);
-            if (templateIdKey) {
-              this.allTemplates.push({
-                namespaceName,
-                templateIdKey,
-                hasPayload: true,
-              });
-            }
-          }
-        }
+      const namespaceName = node.name.text;
+      if (namespaceName === 'Query' || namespaceName === 'TypeGuards' || namespaceName === 'MockFactories') {
+        return;
       }
+
+      const templateIdKey = this.findTemplateIdKeyForNamespace(namespaceName);
+      if (!templateIdKey) return;
+
+      if (!node.body || !ts.isModuleBlock(node.body)) return;
+
+      const hasPayload = node.body.statements.some(
+        (member) =>
+          ts.isInterfaceDeclaration(member) &&
+          ts.isIdentifier(member.name) &&
+          member.name.text === 'Payload'
+      );
+      if (!hasPayload) return;
+
+      const hasCreate = node.body.statements.some(
+        (member) =>
+          ts.isFunctionDeclaration(member) &&
+          member.name &&
+          ts.isIdentifier(member.name) &&
+          member.name.text === 'create'
+      );
+      if (!hasCreate) return;
+
+      const choices: ChoiceFunctionInfo[] = [];
+
+      for (const member of node.body.statements) {
+        if (!ts.isFunctionDeclaration(member) || !member.name || !ts.isIdentifier(member.name)) {
+          continue;
+        }
+
+        const fnName = member.name.text;
+        if (fnName === 'create') continue;
+
+        const choiceName = this.extractChoiceNameFromFunction(member);
+        if (!choiceName) continue;
+
+        choices.push({
+          functionName: fnName,
+          choiceName,
+          hasArgs: member.parameters.length >= 2,
+        });
+      }
+
+      this.templates.push({
+        namespaceName,
+        templateIdKey,
+        hookSegment: '',
+        keyName: '',
+        queryHookName: '',
+        createHookName: '',
+        actionsHookName: '',
+        choices,
+      });
     });
   }
 
-  /**
-   * Find the template ID key that matches a namespace name.
-   */
+  private extractChoiceNameFromFunction(fn: ts.FunctionDeclaration): string | null {
+    if (!fn.body) return null;
+
+    for (const stmt of fn.body.statements) {
+      if (!ts.isReturnStatement(stmt) || !stmt.expression) continue;
+      if (!ts.isObjectLiteralExpression(stmt.expression)) continue;
+
+      for (const prop of stmt.expression.properties) {
+        if (!ts.isPropertyAssignment(prop)) continue;
+
+        const propName = ts.isIdentifier(prop.name)
+          ? prop.name.text
+          : ts.isStringLiteral(prop.name)
+            ? prop.name.text
+            : null;
+
+        if (propName !== 'choice') continue;
+
+        if (ts.isStringLiteral(prop.initializer)) {
+          return prop.initializer.text;
+        }
+      }
+    }
+
+    return null;
+  }
+
   private findTemplateIdKeyForNamespace(namespaceName: string): string | null {
-    // Direct match
     if (this.templateIds.includes(namespaceName)) {
       return namespaceName;
     }
-    // Fallback: look for partial match
     for (const id of this.templateIds) {
       if (id === namespaceName || id.endsWith(`_${namespaceName}`)) {
         return id;
@@ -179,54 +224,63 @@ class CantonReactGenerator {
     return null;
   }
 
-  private parseWorkflows(sourceFile: ts.SourceFile): void {
-    ts.forEachChild(sourceFile, (node) => {
-      if (ts.isModuleDeclaration(node) && ts.isIdentifier(node.name)) {
-        const namespaceName = node.name.text;
+  private assignUniqueHookNames(): void {
+    const used = new Set<string>();
 
-        if (node.body && ts.isModuleBlock(node.body)) {
-          let typeName: 'Request' | 'Proposal' | null = null;
-          const choices: string[] = [];
+    for (const t of this.templates) {
+      const segment = this.pickUniqueHookSegment(t.namespaceName, used);
+      used.add(segment);
 
-          // Look for Request or Proposal interface
-          for (const member of node.body.statements) {
-            if (ts.isInterfaceDeclaration(member) && ts.isIdentifier(member.name)) {
-              const interfaceName = member.name.text;
-              if (interfaceName === 'Request' || interfaceName === 'Proposal') {
-                typeName = interfaceName;
-              }
-            }
+      t.hookSegment = segment;
+      t.keyName = this.toCamelCase(segment);
 
-            // Extract function names (choices)
-            if (ts.isFunctionDeclaration(member) && member.name && ts.isIdentifier(member.name)) {
-              const fnName = member.name.text;
-              if (fnName !== 'request' && fnName !== 'propose') {
-                choices.push(fnName);
-              }
-            }
-          }
-
-          if (typeName) {
-            const templateIdKey = this.findTemplateIdKey(namespaceName, typeName);
-            this.workflows.push({
-              name: namespaceName,
-              typeName,
-              templateIdKey,
-              choices
-            });
-          }
-        }
-      }
-    });
+      t.queryHookName = `use${this.pluralize(segment)}`;
+      t.createHookName = `useCreate${segment}`;
+      t.actionsHookName = `use${segment}Actions`;
+    }
   }
 
-  private findTemplateIdKey(workflowName: string, typeName: string): string {
-    for (const id of this.templateIds) {
-      if (id.includes(workflowName) && id.includes(typeName)) {
-        return id;
-      }
+  private pickUniqueHookSegment(namespaceName: string, used: Set<string>): string {
+    const parts = namespaceName.split('_').filter(Boolean);
+    const cleanedParts = parts.map((p) => this.sanitizeIdentifier(p)).filter(Boolean);
+
+    // Candidate 1: last segment
+    const candidates: string[] = [];
+    if (cleanedParts.length > 0) {
+      candidates.push(cleanedParts[cleanedParts.length - 1]);
     }
-    return `Workflow_${workflowName}_${typeName}`;
+
+    // Candidate 2..N: prepend more context from the right
+    for (let take = 2; take <= Math.min(6, cleanedParts.length); take++) {
+      const slice = cleanedParts.slice(-take);
+      candidates.push(slice.join(''));
+    }
+
+    // Final fallback: full concatenation
+    candidates.push(cleanedParts.join(''));
+
+    for (const cand of candidates) {
+      const normalized = this.ensureValidIdentifier(cand);
+      if (!normalized) continue;
+      if (!used.has(normalized)) return normalized;
+    }
+
+    // Absolute last resort: add a numeric suffix
+    const base = this.ensureValidIdentifier(cleanedParts[cleanedParts.length - 1] || 'Template');
+    let i = 2;
+    while (used.has(`${base}${i}`)) i++;
+    return `${base}${i}`;
+  }
+
+  private sanitizeIdentifier(value: string): string {
+    return value.replace(/[^A-Za-z0-9_]/g, '');
+  }
+
+  private ensureValidIdentifier(value: string): string {
+    const v = this.sanitizeIdentifier(value);
+    if (!v) return '';
+    if (/^[A-Za-z_]/.test(v)) return v;
+    return `_${v}`;
   }
 
   private generateReactDir(): void {
@@ -283,14 +337,16 @@ export function CantonProvider({
   );
 
   const queryClient = useMemo(
-    () => providedClient ?? new QueryClient({
-      defaultOptions: {
-        queries: {
-          staleTime: 5000,
-          retry: 2,
+    () =>
+      providedClient ??
+      new QueryClient({
+        defaultOptions: {
+          queries: {
+            staleTime: 5000,
+            retry: 2,
+          },
         },
-      },
-    }),
+      }),
     [providedClient]
   );
 
@@ -298,13 +354,12 @@ export function CantonProvider({
 
   return (
     <QueryClientProvider client={queryClient}>
-      <LedgerContext.Provider value={contextValue}>
-        {children}
-      </LedgerContext.Provider>
+      <LedgerContext.Provider value={contextValue}>{children}</LedgerContext.Provider>
     </QueryClientProvider>
   );
 }
 `;
+
     const outputPath = path.join(this.sdkDir, 'react', 'context', 'LedgerContext.tsx');
     fs.writeFileSync(outputPath, output);
     console.log(`   ✓ react/context/LedgerContext.tsx`);
@@ -326,6 +381,7 @@ export function useLedger(): LedgerContextValue {
   return context;
 }
 `;
+
     const outputPath = path.join(this.sdkDir, 'react', 'context', 'useLedger.ts');
     fs.writeFileSync(outputPath, output);
     console.log(`   ✓ react/context/useLedger.ts`);
@@ -439,6 +495,7 @@ export function useSimpleChoiceMutation<TResult = unknown>(
   });
 }
 `;
+
     const outputPath = path.join(this.sdkDir, 'react', 'hooks', 'core.ts');
     fs.writeFileSync(outputPath, output);
     console.log(`   ✓ react/hooks/core.ts`);
@@ -458,49 +515,17 @@ import type * as API from '../../${this.projectName}-api';
 // ═══════════════════════════════════════════════════════════════
 // TYPED QUERY HOOKS
 // ═══════════════════════════════════════════════════════════════
-// Each template gets a typed query hook for full TypeScript inference.
-// No more manual casts needed!
 
 `;
 
-    // Generate a typed query hook for EACH template (not just workflows)
-    for (const template of this.allTemplates) {
-      const hookName = this.generateQueryHookName(template.namespaceName);
-      const fullTypeName = `API.${template.namespaceName}.Payload`;
-
-      output += `/**
- * Query ${template.namespaceName} contracts with full type safety.
- * @param filter - Optional filter for the query
- * @returns Typed query result with Contract<${template.namespaceName}.Payload>[]
- */
-export function ${hookName}(
-  filter?: Partial<${fullTypeName}>,
+    for (const t of this.templates) {
+      const payloadType = `API.${t.namespaceName}.Payload`;
+      output += `/** Query ${t.namespaceName} contracts with full type safety. */
+export function ${t.queryHookName}(
+  filter?: Partial<${payloadType}>,
   options?: { enabled?: boolean }
-): UseQueryResult<Contract<${fullTypeName}>[]> {
-  return useContractQuery<${fullTypeName}>(TemplateIds.${template.templateIdKey}, filter, options);
-}
-
-`;
-    }
-
-    // Also keep the original workflow hooks for backwards compatibility
-    output += `// ═══════════════════════════════════════════════════════════════
-// WORKFLOW QUERY HOOKS (Legacy - kept for backwards compatibility)
-// ═══════════════════════════════════════════════════════════════
-
-`;
-
-    for (const workflow of this.workflows) {
-      const pluralName = this.pluralize(workflow.name);
-      const typeName = workflow.typeName;
-      const fullTypeName = `API.${workflow.name}.${typeName}`;
-
-      // Check if we already generated a hook for this
-      const existingHookName = this.generateQueryHookName(workflow.templateIdKey);
-      
-      output += `/** @deprecated Use ${existingHookName} instead */
-export function use${pluralName}(filter?: Partial<${fullTypeName}>) {
-  return useContractQuery<${fullTypeName}>(TemplateIds.${workflow.templateIdKey}, filter);
+): UseQueryResult<Contract<${payloadType}>[]> {
+  return useContractQuery<${payloadType}>(TemplateIds.${t.templateIdKey}, filter, options);
 }
 
 `;
@@ -511,95 +536,106 @@ export function use${pluralName}(filter?: Partial<${fullTypeName}>) {
     console.log(`   ✓ react/hooks/queries.ts`);
   }
 
-  /**
-   * Generate a readable hook name from a template namespace.
-   * E.g., "Vault_Config_VaultConfig" -> "useVaultConfigs"
-   * E.g., "Holding_TransferableFungible_TransferableFungible" -> "useTransferableFungibleHoldings"
-   */
-  private generateQueryHookName(namespaceName: string): string {
-    // Split by underscore and take meaningful parts
-    const parts = namespaceName.split('_');
-    
-    // For simple names like "VaultConfig", just pluralize
-    if (parts.length === 1) {
-      return `use${this.pluralize(parts[0])}`;
-    }
-    
-    // For compound names, try to create a readable hook name
-    // Take the last part as the main type, and include context if needed
-    const lastPart = parts[parts.length - 1];
-    
-    // If last two parts are the same (e.g., TransferableFungible_TransferableFungible), deduplicate
-    if (parts.length >= 2 && parts[parts.length - 2] === lastPart) {
-      // Include parent context for clarity (e.g., Holding_TransferableFungible)
-      const context = parts.length >= 3 ? parts[parts.length - 3] : '';
-      if (context) {
-        return `use${context}${this.pluralize(lastPart)}`;
-      }
-      return `use${this.pluralize(lastPart)}`;
-    }
-    
-    // Otherwise use the full name converted to camelCase
-    const camelName = parts.map((p, i) => i === 0 ? p : p).join('');
-    return `use${this.pluralize(camelName)}`;
-  }
-
   private generateMutationHooks(): void {
     let output = `// react/hooks/mutations.ts
 // Generated mutation hooks (action-first naming)
 // DO NOT EDIT - Generated by generate-canton-react.ts
 
-import { useSimpleChoiceMutation } from './core';
-import { useQueryClient } from '@tanstack/react-query';
+import { useContractMutation, useChoiceMutation, useSimpleChoiceMutation } from './core';
 import { TemplateIds } from '../../${this.projectName}-api';
+import type * as API from '../../${this.projectName}-api';
+import type { Command } from '../../core';
 import { queryKeys } from './keys';
+
+type CommandResult<T> = T extends Command<infer R> ? R : unknown;
 
 `;
 
-    for (const workflow of this.workflows) {
-      for (const choice of workflow.choices) {
-        const hookName = `use${this.capitalize(choice)}${workflow.name}`;
-        const keyName = this.toCamelCase(workflow.name);
-        output += `/** ${this.capitalize(choice)} a ${workflow.name} - pass contractId directly */
+    for (const t of this.templates) {
+      const payloadType = `API.${t.namespaceName}.Payload`;
+
+      // Create hook
+      output += `/** Create ${t.hookSegment} contracts */
+export function ${t.createHookName}() {
+  return useContractMutation<${payloadType}>(TemplateIds.${t.templateIdKey}, {
+    invalidateQueries: [queryKeys.${t.keyName}.all],
+  });
+}
+
+`;
+
+      // Choice hooks
+      for (const c of t.choices) {
+        const hookName = `use${this.capitalize(c.functionName)}${t.hookSegment}`;
+        const fnRef = `API.${t.namespaceName}.${c.functionName}`;
+        const resultType = `CommandResult<ReturnType<typeof ${fnRef}>>`;
+
+        if (c.hasArgs) {
+          const argsType = `Parameters<typeof ${fnRef}>[1]`;
+          output += `/** Exercise ${c.choiceName} on ${t.hookSegment} */
 export function ${hookName}() {
-  return useSimpleChoiceMutation(
-    TemplateIds.${workflow.templateIdKey},
-    '${this.capitalize(choice)}',
-    { invalidateQueries: [queryKeys.${keyName}.all] }
+  return useChoiceMutation<${argsType}, ${resultType}>(
+    TemplateIds.${t.templateIdKey},
+    '${c.choiceName}',
+    { invalidateQueries: [queryKeys.${t.keyName}.all] }
   );
 }
 
 `;
+        } else {
+          output += `/** Exercise ${c.choiceName} on ${t.hookSegment} */
+export function ${hookName}() {
+  return useSimpleChoiceMutation<${resultType}>(
+    TemplateIds.${t.templateIdKey},
+    '${c.choiceName}',
+    { invalidateQueries: [queryKeys.${t.keyName}.all] }
+  );
+}
+
+`;
+        }
       }
-    }
 
-    for (const workflow of this.workflows) {
-      const actionsHookName = `use${workflow.name}Actions`;
-      const keyName = this.toCamelCase(workflow.name);
-
-      output += `/** Grouped actions for ${workflow.name} workflow */
-export function ${actionsHookName}() {
+      // Grouped actions hook
+      output += `/** Grouped actions for ${t.hookSegment} */
+export function ${t.actionsHookName}() {
+  const createMutation = ${t.createHookName}();
 `;
 
-      for (const choice of workflow.choices) {
-        output += `  const ${choice}Mutation = useSimpleChoiceMutation(
-    TemplateIds.${workflow.templateIdKey},
-    '${this.capitalize(choice)}',
-    { invalidateQueries: [queryKeys.${keyName}.all] }
-  );
+      for (const c of t.choices) {
+        const choiceHook = `use${this.capitalize(c.functionName)}${t.hookSegment}`;
+        output += `  const ${c.functionName}Mutation = ${choiceHook}();
 `;
       }
 
       output += `
   return {
+    /** Create ${t.hookSegment} */
+    create: (payload: ${payloadType}) => createMutation.mutateAsync(payload),
+    isCreating: createMutation.isPending,
 `;
-      for (const choice of workflow.choices) {
-        output += `    /** ${this.capitalize(choice)} - pass contractId directly */
-    ${choice}: (contractId: string) => ${choice}Mutation.mutateAsync(contractId),
-    is${this.toProgressiveTense(choice)}: ${choice}Mutation.isPending,
+
+      for (const c of t.choices) {
+        const fnRef = `API.${t.namespaceName}.${c.functionName}`;
+        const progressive = this.toProgressiveTense(c.functionName);
+
+        if (c.hasArgs) {
+          const argsType = `Parameters<typeof ${fnRef}>[1]`;
+          output += `    /** ${c.choiceName} */
+    ${c.functionName}: (contractId: string, args: ${argsType}) =>
+      ${c.functionName}Mutation.mutateAsync({ contractId, args }),
+    is${progressive}: ${c.functionName}Mutation.isPending,
 `;
+        } else {
+          output += `    /** ${c.choiceName} */
+    ${c.functionName}: (contractId: string) => ${c.functionName}Mutation.mutateAsync(contractId),
+    is${progressive}: ${c.functionName}Mutation.isPending,
+`;
+        }
       }
-      output += `    error: ${workflow.choices.map(c => `${c}Mutation.error`).join(' || ') || 'null'},
+
+      const errorExpr = ['createMutation.error', ...t.choices.map((c) => `${c.functionName}Mutation.error`)].join(' || ');
+      output += `    error: ${errorExpr},
   };
 }
 
@@ -617,57 +653,25 @@ export function ${actionsHookName}() {
 // DO NOT EDIT - Generated by generate-canton-react.ts
 
 import type { QueryKey } from '@tanstack/react-query';
+import { TemplateIds } from '../../${this.projectName}-api';
 
-// ═══════════════════════════════════════════════════════════════
-// QUERY KEYS
-// ═══════════════════════════════════════════════════════════════
-// Use these keys for cache invalidation and prefetching.
-// Each template has its own key factory.
+// These keys are intentionally shaped to match react/hooks/core.ts:
+// queryKey: ['contracts', templateId, filter]
 
+export const queryKeys = {
 `;
 
-    output += `export const queryKeys = {\n`;
-
-    // Generate keys for ALL templates
-    const generatedKeys = new Set<string>();
-    
-    for (const template of this.allTemplates) {
-      const keyName = this.toCamelCase(template.namespaceName);
-      
-      // Skip if we already generated this key
-      if (generatedKeys.has(keyName)) continue;
-      generatedKeys.add(keyName);
-      
-      output += `  /** Query keys for ${template.namespaceName} */
-  ${keyName}: {
-    all: ['${keyName}'] as QueryKey,
-    lists: (): QueryKey => ['${keyName}', 'list'],
-    list: (filter?: Record<string, unknown>): QueryKey => ['${keyName}', 'list', filter],
-    details: (): QueryKey => ['${keyName}', 'detail'],
-    detail: (id: string): QueryKey => ['${keyName}', 'detail', id],
+    for (const t of this.templates) {
+      output += `  /** Query keys for ${t.namespaceName} */
+  ${t.keyName}: {
+    all: ['contracts', TemplateIds.${t.templateIdKey}] as QueryKey,
+    list: (filter?: unknown): QueryKey => ['contracts', TemplateIds.${t.templateIdKey}, filter],
   },
 `;
     }
 
-    // Also add workflow keys for backwards compatibility
-    for (const workflow of this.workflows) {
-      const keyName = this.toCamelCase(workflow.name);
-      
-      // Skip if we already generated this key
-      if (generatedKeys.has(keyName)) continue;
-      generatedKeys.add(keyName);
-      
-      output += `  ${keyName}: {
-    all: ['${keyName}'] as QueryKey,
-    lists: (): QueryKey => ['${keyName}', 'list'],
-    list: (filter?: Record<string, unknown>): QueryKey => ['${keyName}', 'list', filter],
-    details: (): QueryKey => ['${keyName}', 'detail'],
-    detail: (id: string): QueryKey => ['${keyName}', 'detail', id],
-  },
+    output += `} as const;
 `;
-    }
-
-    output += `};\n`;
 
     const outputPath = path.join(this.sdkDir, 'react', 'hooks', 'keys.ts');
     fs.writeFileSync(outputPath, output);
@@ -692,37 +696,31 @@ export {
 } from './hooks/core';
 export type { ChoiceMutationInput } from './hooks/core';
 
-// Typed query hooks for all templates
+// Typed query hooks
 export {
 `;
 
-    // Export all typed template query hooks
-    for (const template of this.allTemplates) {
-      const hookName = this.generateQueryHookName(template.namespaceName);
-      output += `  ${hookName},\n`;
-    }
-
-    // Also export legacy workflow hooks
-    for (const workflow of this.workflows) {
-      const pluralName = this.pluralize(workflow.name);
-      output += `  use${pluralName},\n`;
+    for (const t of this.templates) {
+      output += `  ${t.queryHookName},
+`;
     }
 
     output += `} from './hooks/queries';
 
-// Mutation hooks for workflows
+// Typed mutation hooks
 export {
 `;
 
-    for (const workflow of this.workflows) {
-      for (const choice of workflow.choices) {
-        const hookName = `use${this.capitalize(choice)}${workflow.name}`;
-        output += `  ${hookName},\n`;
+    for (const t of this.templates) {
+      output += `  ${t.createHookName},
+`;
+      for (const c of t.choices) {
+        const hookName = `use${this.capitalize(c.functionName)}${t.hookSegment}`;
+        output += `  ${hookName},
+`;
       }
-    }
-
-    for (const workflow of this.workflows) {
-      output += `  use${workflow.name}Actions,\n`;
+      output += `  ${t.actionsHookName},
+`;
     }
 
     output += `} from './hooks/mutations';
@@ -756,12 +754,9 @@ export { queryKeys } from './hooks/keys';
 
   private toProgressiveTense(verb: string): string {
     const capitalized = this.capitalize(verb);
-    // Handle words ending in 'e' (decline → Declining)
     if (capitalized.endsWith('e')) {
       return capitalized.slice(0, -1) + 'ing';
     }
-    // Handle words ending in consonant + vowel + consonant (get → Getting)
-    // Skip this for simplicity, most workflow verbs don't need it
     return capitalized + 'ing';
   }
 }
@@ -787,4 +782,6 @@ function main(): void {
   generator.generate();
 }
 
-main();
+if (require.main === module) {
+  main();
+}
