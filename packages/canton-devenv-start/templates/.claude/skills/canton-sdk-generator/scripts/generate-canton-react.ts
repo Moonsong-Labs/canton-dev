@@ -27,7 +27,7 @@ interface TemplateHooksInfo {
   namespaceName: string;
   templateIdKey: string;
 
-  /** Unique readable template segment for hook naming (e.g., VaultConfig) */
+  /** Unique readable template segment for hook naming (e.g., AppConfig) */
   hookSegment: string;
   /** queryKeys object property name (camelCase) */
   keyName: string;
@@ -766,7 +766,7 @@ function main(): void {
 
   if (args.length < 2) {
     console.error('Usage: npx ts-node generate-canton-react.ts <sdk-dir> <project-name>');
-    console.error('Example: npx ts-node generate-canton-react.ts ./sdk vault');
+    console.error('Example: npx ts-node generate-canton-react.ts ./sdk myproject');
     process.exit(1);
   }
 

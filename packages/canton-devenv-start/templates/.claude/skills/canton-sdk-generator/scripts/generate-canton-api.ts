@@ -2211,11 +2211,11 @@ export function createContractStream(): LedgerStream {
  * const resolver = new PackageResolver();
  * await resolver.initialize(ledgerUrl, headers);
  * const resolvedId = await resolver.resolveTemplateId(
- *   'vault:Vault.Config:VaultConfig',
+ *   'myapp:MyApp.Config:AppConfig',
  *   ledgerUrl,
  *   headers
  * );
- * // Returns: '1af92803cb886bb01871a1049c808199feb933b4eebd2253585af52a386e1f32:Vault.Config:VaultConfig'
+ * // Returns: '1af92803cb886bb01871a1049c808199feb933b4eebd2253585af52a386e1f32:MyApp.Config:AppConfig'
  */
 export class PackageResolver {
   /** Cache mapping package names to their hashes */
@@ -3393,7 +3393,7 @@ function main(): void {
 
   if (args.length < 2) {
     console.error('Usage: npx ts-node generate-canton-api.ts <daml-js-dir> <output-dir> [project-name]');
-    console.error('Example: npx ts-node generate-canton-api.ts ../daml-js . vault');
+    console.error('Example: npx ts-node generate-canton-api.ts ../daml-js . myproject');
     process.exit(1);
   }
 

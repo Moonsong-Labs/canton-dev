@@ -1433,7 +1433,7 @@ function main(): void {
 
   if (args.length < 2) {
     console.error('Usage: npx ts-node generate-webapp.ts <project-path> <project-name>');
-    console.error('Example: npx ts-node generate-webapp.ts /path/to/project vault');
+    console.error('Example: npx ts-node generate-webapp.ts /path/to/project myproject');
     process.exit(1);
   }
 

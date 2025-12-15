@@ -56,7 +56,7 @@ ls <project-path>/daml/Scripts/Setup.daml
 **If Setup.daml exists**, create `sdk/__tests__/testSetup.ts`:
 
 1. Read `Setup.daml` and understand what it sets up (factories, instruments, accounts, initial state)
-2. **Extract actual values** - note the specific IDs, amounts, and configuration values used (e.g., `vaultId = "vault-001"`, not made-up values)
+2. **Extract actual values** - note the specific IDs, amounts, and configuration values used (e.g., `configId = "config-001"`, not made-up values)
 3. **Create a `testSetup.ts` that CREATES the same contracts** - the setup file must replicate the Setup.daml logic using the SDK, actually creating contracts on the ledger
 4. Export parties (from environment variables), ledger clients, and any contract IDs created
 5. **Export configuration values** as constants so tests use the same values as Setup.daml
@@ -71,7 +71,7 @@ ls <project-path>/daml/Scripts/Setup.daml
 
 The setup file should:
 
-1. **Check if setup already ran** - Query for a key contract (e.g., VaultState). If it exists, skip creation to allow re-running tests.
+1. **Check if setup already ran** - Query for a key contract created by setup (e.g., a config or state contract). If it exists, skip creation to allow re-running tests.
 2. **Re-fund user accounts if needed** - When reusing existing state, users may have consumed their holdings from previous test runs. Check and re-fund if necessary.
 3. **Create factories** - Account factory, holding factory, token factory
 4. **Create instruments** - Tokens/assets the system uses
@@ -206,22 +206,13 @@ For each `.daml` file in `Scripts/tests/`:
      // const contracts = await ledger.query(Query.yourProject_State_MainState());
      ```
 4. **Apply DRY** - extract helpers for repeated patterns, don't duplicate code
-5. **Map parties** - DAML party names become environment variables (e.g. `alice` → `process.env.ALICE_PARTY`)
+5. **Map parties** - DAML party names become environment variables (e.g. `user` → `process.env.USER_PARTY`)
 6. **Verify the same outcome** - the test should assert that the final state matches what the DAML script expects
-
-### Fee / Net vs Gross Assertions (Common Pitfall)
-
-If a workflow charges fees, do **not** assume “vault assets decrease by what the user received”.
-Often:
-- **User payout** is **net** (after fee)
-- **State like totalAssets** moves by the **gross** amount (before fee), depending on the model
-
-Derive expectations from the DAML logic / returned values to avoid off‑by‑fee errors.
 
 ### Test Independence
 
 Each test should be **runnable independently** where possible:
-- If a test depends on prior state (e.g., redemption requires a prior deposit), either:
+- If a test depends on prior state (e.g., a withdrawal requires a prior credit), either:
   - Create the required state in the test's own `beforeAll`
   - OR clearly document the dependency and required test order
 
@@ -232,7 +223,7 @@ If you must enforce order (last resort), prefix filenames with numbers (e.g., `0
 
 In `beforeAll()`, **verify the ledger is properly set up** before running tests:
 - Query for expected contracts from Setup.daml
-- Throw a clear error if setup contracts are missing (e.g., "VaultState not found. Ensure `daml start` completed successfully.")
+- Throw a clear error if setup contracts are missing (e.g., "Setup contracts not found. Ensure `daml start` completed successfully.")
 
 ### CRITICAL: Query API Pattern
 
@@ -289,7 +280,7 @@ export type Numeric = string;
 
 // ✅ CORRECT - use string literals for amounts
 const amount: Numeric = "500.0";
-const sharePrice: Numeric = "1.0";
+const price: Numeric = "1.0";
 const initialBalance: Numeric = "1000.0";
 
 // ❌ WRONG - numbers cause type errors
@@ -302,16 +293,16 @@ Since `Numeric` is a string, you must parse before arithmetic:
 
 ```typescript
 // ✅ CORRECT - parse to number for calculations
-const depositAmount = "500.0";
-const sharePrice = "1.0";
-const expectedShares = parseFloat(depositAmount) / parseFloat(sharePrice);
+const amount = "500.0";
+const price = "1.0";
+const expectedResult = parseFloat(amount) / parseFloat(price);
 
 // For comparisons with contract data:
-const actualShares = parseFloat(vaultState.payload.totalShares);
-expect(actualShares).toBeCloseTo(expectedShares, 6);
+const actualAmount = parseFloat(contractState.payload.totalAmount);
+expect(actualAmount).toBeCloseTo(expectedResult, 6);
 
 // ❌ WRONG - direct arithmetic on strings
-const shares = depositAmount / sharePrice;  // NaN or type error
+const result = amount / price;  // NaN or type error
 ```
 
 #### 4. InstrumentKey and AccountKey
@@ -330,8 +321,8 @@ const instrumentKey: InstrumentKey = {
 
 const accountKey: AccountKey = {
   custodian: custodianParty,
-  owner: aliceParty,
-  id: { unpack: "Alice@Vault" }  // Id type, not string
+  owner: userParty,
+  id: { unpack: "User@Operator" }  // Id type, not string
 };
 
 // ❌ WRONG - plain string ids
@@ -457,7 +448,7 @@ When working with holdings in Daml Finance workflows:
 // 1. First split the holding using Fungible.Split interface
 // 2. Then use the split holding in the workflow
 
-// Example: If Alice has 1000 USD and wants to deposit 500
+// Example: If user has 1000 USD and wants to transfer 500
 // Option A: Deposit all 1000 (simpler)
 const depositAmount = "1000.0";  // Full balance
 
@@ -498,7 +489,7 @@ Use descriptive assertion messages that explain what's being checked:
 expect(holdings.length).toBeGreaterThan(0);
 
 // GOOD - explains what should exist and why
-expect(holdings.length, 'Alice should have USD holdings from setup script').toBeGreaterThan(0);
+expect(holdings.length, 'User should have USD holdings from setup script').toBeGreaterThan(0);
 ```
 
 ### Test File Structure (with Setup)
@@ -512,7 +503,7 @@ If `testSetup.ts` was created, import from it:
  * Prerequisites:
  * 1. Start Canton ledger: `daml start`
  * 2. Setup script runs automatically via init-script in daml.yaml
- * 3. Set environment variables: ALICE_PARTY, BOB_PARTY
+ * 3. Set environment variables: USER_PARTY, OPERATOR_PARTY
  * 
  * Workflow: <brief description>
  */
@@ -553,7 +544,7 @@ If no Setup.daml exists, tests are self-contained:
  * 
  * Prerequisites:
  * 1. Start Canton ledger: `daml start`
- * 2. Set environment variables: ALICE_PARTY, BOB_PARTY
+ * 2. Set environment variables: USER_PARTY, OPERATOR_PARTY
  * 
  * Workflow: <brief description>
  */
