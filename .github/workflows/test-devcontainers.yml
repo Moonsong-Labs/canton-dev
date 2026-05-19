@@ -11,15 +11,24 @@ jobs:
         variant: [stable, latest]
     steps:
       - uses: actions/checkout@v4
-      - name: Extract SDK version
-        id: sdk
+
+      - name: Extract devcontainer build config
+        id: config
         run: |
-          VERSION=$(jq -r '.build.args.DAML_SDK_VERSION' \
-            packages/canton-devenv-start/templates/.devcontainer/${{ matrix.variant }}/devcontainer.json)
+          DEVCONTAINER_DIR="packages/canton-devenv-start/templates/.devcontainer/${{ matrix.variant }}"
+          DEVCONTAINER_JSON="${DEVCONTAINER_DIR}/devcontainer.json"
+
+          VERSION=$(jq -r '.build.args.DAML_SDK_VERSION' "$DEVCONTAINER_JSON")
+          DOCKERFILE=$(jq -r '.build.dockerfile' "$DEVCONTAINER_JSON")
+          CONTEXT=$(jq -r '.build.context' "$DEVCONTAINER_JSON")
+
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "dockerfile=$(realpath -m "${DEVCONTAINER_DIR}/${DOCKERFILE}")" >> $GITHUB_OUTPUT
+          echo "context=$(realpath -m "${DEVCONTAINER_DIR}/${CONTEXT}")" >> $GITHUB_OUTPUT
+
       - name: Build ${{ matrix.variant }}
         run: |
           docker build \
-            --build-arg DAML_SDK_VERSION=${{ steps.sdk.outputs.version }} \
-            -f packages/canton-devenv-start/templates/.devcontainer/Dockerfile \
-            packages/canton-devenv-start/templates/.devcontainer
+            --build-arg DAML_SDK_VERSION=${{ steps.config.outputs.version }} \
+            -f "${{ steps.config.outputs.dockerfile }}" \
+            "${{ steps.config.outputs.context }}"
