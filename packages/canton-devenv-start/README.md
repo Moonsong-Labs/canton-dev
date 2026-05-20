@@ -35,6 +35,9 @@ Pre-configured Docker environment for Canton/DAML development. Eliminates manual
 - **daml-lsp-restart.sh** - Language server restarter helper
 
 ### Claude Code Integration
+The scaffold includes Claude skills for common Canton/Daml development tasks. They are copied into `.claude/skills/` so Claude can auto-invoke them from natural-language requests in the generated workspace.
+
+#### Canton SDK Generation
 **Problem:** DAML's `codegen js` produces verbose, deeply-nested TypeScript with package hashes and complex type paths—difficult to use directly in applications.
 
 **Solution:** AI-assisted SDK generation via Skill (auto-invoked when you mention "generate canton SDK"):
@@ -61,13 +64,22 @@ sdk/
     └── <project>-api.test.ts
 ```
 
-**Skill location:** `.claude/skills/canton-sdk-generator/`
+#### Included Claude Skills
+| Skill | What it helps with | Example request |
+|-------|--------------------|-----------------|
+| `canton-sdk-generator` | Generates a clean TypeScript API from Daml contracts, including workflows, type guards, mock factories, and Vitest coverage. | `Generate a TypeScript API from my Daml contracts` |
+| `canton-test-generator` | Generates TypeScript integration tests from Daml scripts using the generated SDK. | `Generate tests for my Canton project` |
+| `canton-webapp-generator` | Generates a React/Vite webapp wired to a Canton ledger and the generated SDK. | `Create a webapp for this ledger app` |
+| `daml-diagrams` | Designs and renders themed PlantUML activity diagrams for Daml choices, exercise flows, and multi-party workflows. | `Diagram this Daml choice flow` |
+| `daml-on-ledger-decision` | Helps decide whether logic belongs on-ledger in Daml or off-ledger in a backend, with a bias toward small on-ledger commitments. | `Should this validation be a Daml choice or backend logic?` |
+
+**Skill location:** `.claude/skills/`
 
 ## Getting Started
 1. Run scaffold command
 2. Open in VS Code/Cursor
 3. "Reopen in Container" → choose **latest** or **stable**
-4. (Optional) Ask Claude to generate TypeScript SDK from your Daml contracts
+4. (Optional) Ask Claude to generate a TypeScript SDK, tests, a webapp, Daml workflow diagrams, or on-/off-ledger design guidance
 
 ## Local Development
 ```bash

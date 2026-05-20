@@ -1,0 +1,94 @@
+@startuml WorkflowName
+
+' ============================================================================
+' Themed style block — light theme. For dark or sketchy variants see
+' references/styling.md in this skill.
+' ============================================================================
+<style>
+activityDiagram {
+  FontName Inter
+  FontSize 13
+  BackgroundColor #FFFFFF
+
+  activity {
+    BackgroundColor #FFFFFF
+    LineColor #2C3E50
+    LineThickness 1
+    RoundCorner 6
+    FontColor #1F2A36
+    Padding 10
+    Margin 10
+  }
+  arrow {
+    LineColor #2C3E50
+    LineThickness 1.2
+    FontColor #4A5A6A
+    FontSize 11
+  }
+  swimlane {
+    LineColor #B8C4D1
+    LineThickness 1
+    FontColor #2C3E50
+    FontStyle bold
+  }
+  circle {
+    BackgroundColor #000000
+    LineColor #000000
+  }
+  .sync {
+    BackgroundColor #1F2A36
+    LineColor #1F2A36
+    FontColor #FFFFFF
+    RoundCorner 3
+  }
+}
+</style>
+
+' ============================================================================
+' Lane declarations — declare every lane up front in the desired left-to-right
+' order. Place each actor's UI/backend/on-ledger lanes adjacent to one another,
+' and put the coordinator (market operator, custodian, DvP backend) between
+' the two parties' lanes.
+' ============================================================================
+|Lane 1|
+|Lane 2|
+|Lane 3 (Coordinator)|
+|Lane 4|
+|Lane 5|
+
+' ============================================================================
+' Flow begins
+' ============================================================================
+|Lane 2|
+start
+:Exercise <Choice>\non <Template>;
+
+|Lane 4|
+:Exercise <NextChoice>\non <Template>;
+
+' --- If there is parallelism that crosses lanes, use this fork pattern ------
+' Replace the labels with the actual coordinator action when one exists.
+'
+' |Lane 3 (Coordinator)|
+' :<color:white>**fork**</color>; <<sync>>
+' fork
+'   |Lane 1|
+'   :Branch A step;
+'   -> redirect;
+'   |Lane 2|
+'   :Branch A step 2;
+' fork again
+'   |Lane 5|
+'   :Branch B step;
+'   -> redirect;
+'   |Lane 4|
+'   :Branch B step 2;
+' end fork
+'
+' |Lane 3 (Coordinator)|
+' :<color:white>**join**</color>; <<sync>>
+' --------------------------------------------------------------------------
+
+:Exercise <FinalChoice>\non <Template>;
+stop
+@enduml
