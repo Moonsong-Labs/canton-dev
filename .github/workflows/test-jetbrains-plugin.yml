@@ -1,0 +1,38 @@
+name: Test JetBrains Plugin
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/test-jetbrains-plugin.yml"
+      - "packages/canton-jetbrains-plugin/**"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/test-jetbrains-plugin.yml"
+      - "packages/canton-jetbrains-plugin/**"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/canton-jetbrains-plugin
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - name: Build plugin
+        run: ./gradlew --no-daemon --no-configuration-cache test buildPlugin
+
+      - name: Upload plugin zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: canton-jetbrains-plugin
+          path: packages/canton-jetbrains-plugin/build/distributions/*.zip
+          if-no-files-found: error
