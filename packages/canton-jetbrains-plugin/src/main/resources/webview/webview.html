@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8"/>
+    <!--
+      CSP rationale: the only legitimate script source is the data: URL we inject ourselves
+      via the host (see ScriptResultsPanel.loadInitialHtml). Server-pushed HTML carries
+      transaction-tree markup; any <script>, javascript:, or on*-handler in it is a defect
+      or a hostile payload. Block them at the browser level; the JS sanitizer in
+      webview.js is a second line of defense.
+    -->
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'none'; script-src data:; style-src data: 'unsafe-inline'; img-src data:; connect-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none';"/>
+    <title>DAML Script Results</title>
+    <link rel="stylesheet" type="text/css" href="$webviewCss"/>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; padding: 8px; }
+        body.empty .empty-message { display: block; }
+        .empty-message { display: none; color: #888; font-style: italic; }
+        .controls { margin-bottom: 8px; }
+        .controls label { margin-right: 12px; font-size: 12px; }
+        .note { background: #ffffd0; padding: 4px 8px; border-left: 3px solid #d4b800; margin-bottom: 8px; }
+    </style>
+</head>
+<body class="empty hide_archived hide_table">
+    <div class="empty-message">No script results yet. Run a script in your .daml file to see results here.</div>
+    <div class="controls">
+        <label><input type="checkbox" id="show_archived" onchange="show_archived_changed()"/> Show archived</label>
+        <label><input type="checkbox" id="show_detailed_disclosure" onchange="toggle_detailed_disclosure()"/> Detailed disclosure</label>
+        <label><button onclick="toggle_view()">Toggle table/transaction view</button></label>
+    </div>
+    <div id="note" class="note"></div>
+    <div id="content"></div>
+    <script type="text/javascript" src="$webviewSrc"></script>
+</body>
+</html>

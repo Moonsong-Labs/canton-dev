@@ -1,0 +1,70 @@
+import org.jetbrains.intellij.platform.gradle.TestFrameworkType
+
+fun properties(key: String) = providers.gradleProperty(key)
+
+plugins {
+    id("java")
+    id("org.jetbrains.kotlin.jvm") version "2.1.20"
+    id("org.jetbrains.intellij.platform") version "2.16.0"
+}
+
+group = properties("pluginGroup").get()
+version = properties("pluginVersion").get()
+
+repositories {
+    mavenCentral()
+    intellijPlatform { defaultRepositories() }
+}
+
+dependencies {
+    intellijPlatform {
+        create(properties("platformType").get(), properties("platformVersion").get())
+
+        plugin("com.redhat.devtools.lsp4ij:${properties("lsp4ijVersion").get()}")
+
+        // Bundled plugins we depend on at runtime. If a name fails to resolve in your IDE
+        // edition (e.g. JSON plugin id changes), comment the offending line and remove the
+        // matching <depends> from plugin.xml.
+        bundledPlugin("org.jetbrains.plugins.textmate")
+        bundledPlugin("com.intellij.modules.json")
+
+        pluginVerifier()
+        zipSigner()
+        testFramework(TestFrameworkType.Platform)
+    }
+}
+
+kotlin {
+    jvmToolchain(properties("javaVersion").get().toInt())
+}
+
+intellijPlatform {
+    pluginConfiguration {
+        version = properties("pluginVersion")
+        ideaVersion {
+            sinceBuild = properties("pluginSinceBuild")
+            // untilBuild deliberately omitted: the IntelliJ Platform Gradle Plugin will
+            // auto-detect a sensible upper bound from `platformVersion`. To pin manually,
+            // set `pluginUntilBuild` in gradle.properties (e.g. "252.*").
+        }
+    }
+
+    // The pluginVerification DSL changed across IntelliJ Platform Gradle Plugin minor
+    // versions; run `./gradlew verifyPlugin` only after pinning a specific plugin
+    // version and confirming the matching DSL shape. Not required for `buildPlugin`.
+}
+
+tasks {
+    withType<JavaCompile> {
+        sourceCompatibility = properties("javaVersion").get()
+        targetCompatibility = properties("javaVersion").get()
+    }
+    withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
+        compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
+    }
+
+    wrapper {
+        gradleVersion = "9.2.1"
+        distributionType = Wrapper.DistributionType.BIN
+    }
+}

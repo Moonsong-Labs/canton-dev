@@ -1,0 +1,5 @@
+<idea-plugin>
+    <extensions defaultExtensionNs="com.intellij">
+        <postStartupActivity implementation="com.moonsonglabs.daml.syntax.DamlTextMateRegistrar"/>
+    </extensions>
+</idea-plugin>
