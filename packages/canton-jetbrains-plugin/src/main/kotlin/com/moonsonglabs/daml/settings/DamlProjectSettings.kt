@@ -16,6 +16,7 @@ class DamlProjectSettings : PersistentStateComponent<DamlProjectSettings.State> 
 
     data class State(
         var binaryPath: String = "",
+        var selectedSdkVersion: String = "3.4.11",
         var useDPMWhenAvailable: Boolean = true,
         var logLevel: String = "info",
         var telemetry: String = "opt-out",
@@ -23,8 +24,6 @@ class DamlProjectSettings : PersistentStateComponent<DamlProjectSettings.State> 
         var extraArguments: String = "",
         var cantonBinaryPath: String = "",
         var cantonExtraArguments: String = "",
-        var devcontainerProfile: String = "bundled-3.4.11",
-        var requireDevcontainerRuntime: Boolean = false,
         var lastRuntimeValidation: String = "Not validated",
         var multiPackageIdeSupport: Boolean = false,
         var showArchived: Boolean = false,
@@ -40,6 +39,9 @@ class DamlProjectSettings : PersistentStateComponent<DamlProjectSettings.State> 
     var binaryPath: String
         get() = state.binaryPath
         set(value) { state.binaryPath = value }
+    var selectedSdkVersion: String
+        get() = state.selectedSdkVersion
+        set(value) { state.selectedSdkVersion = value.ifBlank { "3.4.11" } }
     var useDPMWhenAvailable: Boolean
         get() = state.useDPMWhenAvailable
         set(value) { state.useDPMWhenAvailable = value }
@@ -61,12 +63,6 @@ class DamlProjectSettings : PersistentStateComponent<DamlProjectSettings.State> 
     var cantonExtraArguments: String
         get() = state.cantonExtraArguments
         set(value) { state.cantonExtraArguments = value }
-    var devcontainerProfile: String
-        get() = state.devcontainerProfile
-        set(value) { state.devcontainerProfile = value }
-    var requireDevcontainerRuntime: Boolean
-        get() = state.requireDevcontainerRuntime
-        set(value) { state.requireDevcontainerRuntime = value }
     var lastRuntimeValidation: String
         get() = state.lastRuntimeValidation
         set(value) { state.lastRuntimeValidation = value }

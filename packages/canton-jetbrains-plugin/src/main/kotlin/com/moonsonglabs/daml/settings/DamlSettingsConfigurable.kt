@@ -15,7 +15,7 @@ class DamlSettingsConfigurable(private val project: Project) : Configurable {
     override fun getDisplayName(): String = "DAML"
 
     override fun createComponent(): JComponent {
-        val c = DamlSettingsComponent()
+        val c = DamlSettingsComponent(project)
         component = c
         c.loadFrom(DamlProjectSettings.getInstance(project))
         return c.panel

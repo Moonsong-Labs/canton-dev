@@ -8,14 +8,17 @@ v0.1 — local-install beta. Builds a `.zip` artifact suitable for **Settings �
 
 ## Super Quick Start
 
-Use this path when you want to test the plugin in your local JetBrains IDE with a local DAML SDK.
+Use this path when you want to test the plugin in your local JetBrains IDE with the local DAML/DPM runtime.
 
 1. Install a JetBrains IDE and the LSP4IJ plugin.
-2. Install DAML SDK `3.4.11` locally, or confirm it already exists:
+2. Install `dpm` or the DAML assistant if neither exists yet:
 
    ```bash
-   daml install 3.4.11
-   /Users/eze/.daml/sdk/3.4.11/daml/daml version
+   # Preferred for DAML SDK 3.4.x
+   curl -sSL https://get.digitalasset.com/install/install.sh | sh -s
+
+   # Older assistant path, still supported by the plugin
+   curl -sSL https://get.daml.com/ | sh
    ```
 
 3. Build the plugin zip:
@@ -28,21 +31,14 @@ Use this path when you want to test the plugin in your local JetBrains IDE with 
 4. Install `build/distributions/canton-jetbrains-plugin-0.1.0.zip` via **Settings → Plugins → ⚙ → Install Plugin from Disk…**.
 5. Restart the IDE if prompted.
 6. Open your DAML/Canton project folder.
-7. Run **Tools → Validate Canton/DAML Runtime**. A local runtime is OK; devcontainer is optional.
-8. Open a `.daml` file and confirm highlighting, diagnostics, hover, completion, and go-to-definition.
-9. Run a generated run configuration:
+7. Open **Settings → Languages & Frameworks → DAML**, choose DAML SDK `3.4.11`, and click **Install selected SDK** if that SDK is not installed yet.
+8. Run **Tools → Validate Canton/DAML Runtime**.
+9. Open a `.daml` file and confirm highlighting, diagnostics, hover, completion, and go-to-definition.
+10. Run a generated run configuration:
     - `DAML Build` from `daml.yaml` or `multi-package.yaml`
     - `DAML Script` from a `.daml` file with a script declaration
     - `Canton Config` from a `.conf` file
     - `Canton Script` from a `.canton` or `.canton.sc` file
-
-Optional devcontainer path:
-
-1. Install Docker and use a JetBrains IDE with Dev Containers support.
-2. Run **Tools → Prepare Canton/DAML Devcontainer**.
-3. Reopen the project using JetBrains Dev Containers and pick the generated `.devcontainer/devcontainer.json`.
-4. Run **Tools → Validate Canton/DAML Runtime**.
-5. Enable **Require Canton/DAML devcontainer runtime for run configurations** only if you want run configs to refuse local execution.
 
 Expected success signals:
 
@@ -61,17 +57,16 @@ Expected success signals:
 - `daml.yaml` and `multi-package.yaml` JSON-schema completion
 - DAML run configurations for build, test, script, and start
 - Canton config/script highlighting and run configurations for `.conf`, `.canton`, and `.canton.sc`
-- Bundled Canton/DAML devcontainer template for reproducible local beta testing
 - Live templates (`template`, `choice`, `signatory`, `script`, …)
-- Per-project settings: devcontainer profile, runtime validation, DAML/DPM/Canton binary paths, log level, telemetry, extra args, multi-package mode
+- Per-project settings: DAML SDK version installer, runtime validation, DAML/DPM/Canton binary paths, log level, telemetry, extra args, multi-package mode
 - DAML LSP currently uses stable single-package `damlc ide`; root `multi-package.yaml` projects fall back to the active or first nested `daml.yaml` package workspace.
 - The upstream DAML TextMate grammar is bundled at `resources/grammars/daml.tmLanguage.xml` for users who want to register it manually via **Settings → Editor → TextMate Bundles** (not auto-registered)
 
 ## Prerequisites
 
 - A JetBrains IDE on **2025.2** or newer
-- Docker, only if you use the bundled devcontainer
-- The DAML SDK/Canton runtime installed in the active IDE backend (`daml --version` and `canton --help` should work there)
+- `dpm` or the DAML assistant installed locally. The plugin can install SDK `3.4.11` from there.
+- Canton installed locally if you want Canton run configurations (`canton --help` should work, or set the Canton binary override)
 - The [LSP4IJ plugin](https://plugins.jetbrains.com/plugin/23257-lsp4ij) installed in your IDE (it is a runtime dependency; the IDE will offer to install it when you load this plugin)
 
 ## Quickstart — building and testing locally
@@ -119,13 +114,13 @@ To install in your real IDE:
 |---|---|
 | Plugin zip not found | Run `./gradlew buildPlugin`; install `build/distributions/canton-jetbrains-plugin-0.1.0.zip`. |
 | LSP4IJ missing | Install the LSP4IJ plugin from JetBrains Marketplace, then restart the IDE. |
-| "Not running inside the Canton/DAML devcontainer" | This only blocks run configurations when **Require Canton/DAML devcontainer runtime for run configurations** is enabled. Disable it for local SDK testing, or reopen the project with JetBrains Dev Containers. |
 | `Unable to start language server: ProcessStreamConnectionProvider ... ~/.daml/bin/daml ... multi-ide` | Reinstall the latest plugin zip. For host testing, the plugin now prefers the pinned SDK assistant, for example `~/.daml/sdk/3.4.11/daml/daml`, over stale `~/.daml/bin/daml` symlinks. |
 | `Unable to start language server ... damlc multi-ide ...` | Reinstall the latest plugin zip. The beta now avoids `damlc multi-ide` for LSP startup and uses stable `damlc ide` from a nested package workspace. |
-| "DAML SDK not found" | Confirm `daml` or `dpm` is on the active backend PATH, or set the binary path in **Settings → Languages & Frameworks → DAML**. |
+| "DAML SDK not found" | Install `dpm` or the DAML assistant first. Then use **Settings → Languages & Frameworks → DAML → Install selected SDK**, or set the binary path override. |
 | "Canton not found" | Confirm `canton` is on the active backend PATH, or set the Canton binary path in settings. |
 | "No daml.yaml found" | Open a project containing `daml.yaml` / `multi-package.yaml`; nested DAML packages are discovered automatically. |
 | Script Results panel says "JCEF not available" | On Linux, **Help → Find Action → Choose Boot Java Runtime for the IDE → install with JCEF**. |
+| `dpm` works in plugin run configs but not in a new IDE Terminal tab | Plugin-started LSP/run processes prepend `~/.dpm/bin`, `~/.daml/bin`, and `~/.daml/sdk/<version>/daml` to `PATH`. Regular Terminal tabs inherit your shell/IDE environment, so add `~/.dpm/bin` to your shell profile if you want to type `dpm` there directly. |
 | Need logs | Check **Help → Show Log in Finder/Explorer**, the Run tool window, and `build/reports/pluginVerifier` after `./gradlew verifyPlugin`. |
 
 ## Development

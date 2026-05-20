@@ -15,9 +15,9 @@ import com.intellij.execution.runners.ExecutionEnvironment
 import com.intellij.openapi.options.SettingsEditor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.JDOMExternalizerUtil
-import com.moonsonglabs.daml.devcontainer.RuntimeValidator
 import com.moonsonglabs.daml.lsp.DamlBinaryLocator
 import com.moonsonglabs.daml.runtime.RuntimeEnvironment
+import com.moonsonglabs.daml.runtime.RuntimeValidator
 import com.moonsonglabs.daml.settings.DamlProjectSettings
 import com.moonsonglabs.daml.workspace.DamlWorkspaceService
 import org.jdom.Element
@@ -42,11 +42,11 @@ class DamlRunConfiguration(
     override fun getState(executor: Executor, environment: ExecutionEnvironment): RunProfileState =
         object : CommandLineState(environment) {
             override fun startProcess(): ProcessHandler {
-                RuntimeValidator.getInstance(project).requireReadyForRun()
+                RuntimeValidator.getInstance(project).requireDamlReadyForRun()
                 val cmd = GeneralCommandLine(buildCommandLine())
                     .withCharset(StandardCharsets.UTF_8)
                     .withWorkDirectory(resolveWorkspace().toFile())
-                RuntimeEnvironment.applyIdeJava(cmd)
+                RuntimeEnvironment.applyLocalTools(cmd, DamlProjectSettings.getInstance(project))
                 val handler = OSProcessHandler(cmd)
                 ProcessTerminatedListener.attach(handler)
                 return handler

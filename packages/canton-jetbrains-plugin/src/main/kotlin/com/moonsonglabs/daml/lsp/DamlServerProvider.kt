@@ -80,7 +80,7 @@ class DamlServerProvider(private val project: Project) : ProcessStreamConnection
         thisLogger().info("Starting DAML LSP: " + args.joinToString(" "))
         super.setCommands(args)
         super.setIncludeSystemEnvironmentVariables(true)
-        super.setUserEnvironmentVariables(RuntimeEnvironment.ideJavaEnvironment())
+        super.setUserEnvironmentVariables(RuntimeEnvironment.localToolEnvironment(settings))
         super.setWorkingDirectory(workspaceRoot.toAbsolutePath().toString())
     }
 

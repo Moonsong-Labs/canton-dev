@@ -2,6 +2,7 @@ package com.moonsonglabs.daml.lsp
 
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.SystemInfo
+import com.moonsonglabs.daml.runtime.RuntimeEnvironment
 import com.moonsonglabs.daml.settings.DamlProjectSettings
 import java.io.File
 import java.nio.file.Files
@@ -40,7 +41,7 @@ object DamlBinaryLocator {
 
         if (settings.useDPMWhenAvailable) {
             findOnPath("dpm")?.let { return Resolution(it, Resolution.Flavor.DPM) }
-            wellKnown(".dpm/bin/dpm")?.let { return Resolution(it, Resolution.Flavor.DPM) }
+            RuntimeEnvironment.findExecutable("dpm", settings)?.let { return Resolution(it, Resolution.Flavor.DPM) }
         }
 
         workspaceSdkVersion(workspaceRoot)?.let { sdkVersion ->
@@ -49,8 +50,14 @@ object DamlBinaryLocator {
             }
         }
 
+        settings.selectedSdkVersion.takeIf { it.isNotBlank() }?.let { sdkVersion ->
+            wellKnown(".daml/sdk/$sdkVersion/daml/daml")?.let {
+                return Resolution(it, Resolution.Flavor.DAML)
+            }
+        }
+
         findOnPath("daml")?.let { return Resolution(it, Resolution.Flavor.DAML) }
-        wellKnown(".daml/bin/daml")?.let { return Resolution(it, Resolution.Flavor.DAML) }
+        RuntimeEnvironment.findExecutable("daml", settings)?.let { return Resolution(it, Resolution.Flavor.DAML) }
 
         return null
     }

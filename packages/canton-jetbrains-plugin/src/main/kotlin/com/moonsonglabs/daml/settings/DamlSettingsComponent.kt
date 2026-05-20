@@ -2,17 +2,22 @@ package com.moonsonglabs.daml.settings
 
 import com.intellij.openapi.fileChooser.FileChooser
 import com.intellij.openapi.fileChooser.FileChooserDescriptor
+import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.TextFieldWithBrowseButton
 import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.FormBuilder
 import com.moonsonglabs.daml.DamlBundle
+import com.moonsonglabs.daml.sdk.DamlSdkInstaller
+import com.moonsonglabs.daml.sdk.DamlSdkVersions
+import java.awt.BorderLayout
+import javax.swing.JButton
 import javax.swing.JComboBox
 import javax.swing.JComponent
 import javax.swing.JPanel
 
-class DamlSettingsComponent {
+class DamlSettingsComponent(private val project: Project) {
 
     val binaryPathField = TextFieldWithBrowseButton().apply {
         toolTipText = DamlBundle.message("daml.settings.binaryPath.tooltip")
@@ -40,6 +45,29 @@ class DamlSettingsComponent {
 
     val useDPMCheckbox = JBCheckBox(DamlBundle.message("daml.settings.useDPM.label"))
 
+    val sdkVersionCombo = JComboBox(DamlSdkVersions.choices().toTypedArray()).apply {
+        isEditable = true
+        toolTipText = DamlBundle.message("daml.settings.sdkVersion.tooltip")
+    }
+
+    private val installSdkButton = JButton(DamlBundle.message("daml.settings.installSdk.button")).apply {
+        toolTipText = DamlBundle.message("daml.settings.installSdk.tooltip")
+        addActionListener {
+            runtimeStatusLabel.text = "Installing DAML SDK ${selectedSdkVersion()}..."
+            DamlSdkInstaller.getInstance(project).installSelected(
+                selectedSdkVersion(),
+                binaryPathField.text.trim()
+            ) { status ->
+                runtimeStatusLabel.text = status
+            }
+        }
+    }
+
+    private val sdkVersionPanel = JPanel(BorderLayout(6, 0)).apply {
+        add(sdkVersionCombo, BorderLayout.CENTER)
+        add(installSdkButton, BorderLayout.EAST)
+    }
+
     val logLevelCombo = JComboBox(arrayOf("error", "warning", "info", "debug", "trace"))
 
     val telemetryCombo = JComboBox(arrayOf(
@@ -58,15 +86,12 @@ class DamlSettingsComponent {
         toolTipText = DamlBundle.message("daml.settings.cantonExtraArguments.tooltip")
     }
 
-    val devcontainerProfileField = JBTextField()
-    val requireDevcontainerCheckbox = JBCheckBox(DamlBundle.message("daml.settings.requireDevcontainer.label"))
     val runtimeStatusLabel = JBLabel()
 
     val multiPackageCheckbox = JBCheckBox(DamlBundle.message("daml.settings.multiPackage.label"))
 
     val panel: JPanel = FormBuilder.createFormBuilder()
-        .addLabeledComponent(DamlBundle.message("daml.settings.devcontainerProfile.label"), devcontainerProfileField, 1, false)
-        .addComponent(requireDevcontainerCheckbox, 1)
+        .addLabeledComponent(DamlBundle.message("daml.settings.sdkVersion.label"), sdkVersionPanel, 1, false)
         .addLabeledComponent(DamlBundle.message("daml.settings.runtimeStatus.label"), runtimeStatusLabel, 1, false)
         .addLabeledComponent(DamlBundle.message("daml.settings.binaryPath.label"), binaryPathField, 1, false)
         .addLabeledComponent(DamlBundle.message("daml.settings.cantonBinaryPath.label"), cantonBinaryPathField, 1, false)
@@ -83,8 +108,7 @@ class DamlSettingsComponent {
     val preferredFocusedComponent: JComponent = binaryPathField
 
     fun loadFrom(s: DamlProjectSettings) {
-        devcontainerProfileField.text = s.devcontainerProfile
-        requireDevcontainerCheckbox.isSelected = s.requireDevcontainerRuntime
+        sdkVersionCombo.selectedItem = s.selectedSdkVersion
         runtimeStatusLabel.text = s.lastRuntimeValidation
         binaryPathField.text = s.binaryPath
         cantonBinaryPathField.text = s.cantonBinaryPath
@@ -98,8 +122,7 @@ class DamlSettingsComponent {
     }
 
     fun saveTo(s: DamlProjectSettings) {
-        s.devcontainerProfile = devcontainerProfileField.text.trim().ifBlank { "bundled-3.4.11" }
-        s.requireDevcontainerRuntime = requireDevcontainerCheckbox.isSelected
+        s.selectedSdkVersion = selectedSdkVersion()
         s.binaryPath = binaryPathField.text.trim()
         s.cantonBinaryPath = cantonBinaryPathField.text.trim()
         s.useDPMWhenAvailable = useDPMCheckbox.isSelected
@@ -112,8 +135,7 @@ class DamlSettingsComponent {
     }
 
     fun isModified(s: DamlProjectSettings): Boolean =
-        devcontainerProfileField.text.trim() != s.devcontainerProfile
-            || requireDevcontainerCheckbox.isSelected != s.requireDevcontainerRuntime
+        selectedSdkVersion() != s.selectedSdkVersion
             || binaryPathField.text.trim() != s.binaryPath
             || cantonBinaryPathField.text.trim() != s.cantonBinaryPath
             || useDPMCheckbox.isSelected != s.useDPMWhenAvailable
@@ -123,6 +145,11 @@ class DamlSettingsComponent {
             || extraArgsField.text != s.extraArguments
             || cantonExtraArgsField.text != s.cantonExtraArguments
             || multiPackageCheckbox.isSelected != s.multiPackageIdeSupport
+
+    private fun selectedSdkVersion(): String =
+        (sdkVersionCombo.editor.item as? String)?.trim()
+            ?.ifBlank { DamlSdkVersions.DEFAULT }
+            ?: DamlSdkVersions.DEFAULT
 
     private fun telemetryToIndex(t: String): Int = when (t) {
         "opt-in" -> 1

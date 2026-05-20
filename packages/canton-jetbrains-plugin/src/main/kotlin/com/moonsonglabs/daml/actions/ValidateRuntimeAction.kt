@@ -5,7 +5,7 @@ import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.Task
 import com.moonsonglabs.daml.DamlNotifier
-import com.moonsonglabs.daml.devcontainer.RuntimeValidator
+import com.moonsonglabs.daml.runtime.RuntimeValidator
 
 class ValidateRuntimeAction : AnAction() {
     override fun actionPerformed(e: AnActionEvent) {

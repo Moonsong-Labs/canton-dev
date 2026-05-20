@@ -16,7 +16,7 @@
         </ul>
         <h3>Requirements</h3>
         <ul>
-          <li>The DAML SDK installed locally (<code>daml --version</code> should work in your shell)</li>
+          <li><code>dpm</code> or the DAML assistant installed locally. The plugin can then install SDK version <code>3.4.11</code> from settings.</li>
           <li>The <a href="https://plugins.jetbrains.com/plugin/23257-lsp4ij">LSP4IJ</a> plugin (runtime dep — your IDE will offer to install it on first activation)</li>
         </ul>
     ]]></description>
@@ -137,16 +137,10 @@
 	                description="Stop and restart the DAML LSP for the current project">
 	            <add-to-group group-id="ToolsMenu" anchor="last"/>
 	        </action>
-	        <action id="DAML.PrepareDevcontainer"
-	                class="com.moonsonglabs.daml.actions.PrepareDevcontainerAction"
-	                text="Prepare Canton/DAML Devcontainer"
-	                description="Create or update the bundled Canton/DAML devcontainer files">
-	            <add-to-group group-id="ToolsMenu" anchor="last"/>
-	        </action>
 	        <action id="DAML.ValidateRuntime"
 	                class="com.moonsonglabs.daml.actions.ValidateRuntimeAction"
 	                text="Validate Canton/DAML Runtime"
-	                description="Check whether DAML, DPM, Canton, Java, and Node are available in the active backend">
+	                description="Check whether DAML, DPM, Canton, Java, and Node are available locally">
 	            <add-to-group group-id="ToolsMenu" anchor="last"/>
 	        </action>
 	        <action id="daml.showResource"
