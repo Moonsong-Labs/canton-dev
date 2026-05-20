@@ -2,6 +2,8 @@
 .vscode/
 .cursor/
 .idea/
+/.claude/
+/.codex/
 *.swp
 *.swo
 *~
@@ -24,6 +26,7 @@ examples/
 *.log
 .env
 .env.local
+/.gradle-codex/
 
 # Test artifacts
 coverage/

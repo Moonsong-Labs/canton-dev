@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8"/>
+    <!--
+      CSP rationale: the only legitimate script source is the data: URL we inject ourselves
+      via the host (see ScriptResultsPanel.loadInitialHtml). Server-pushed HTML carries
+      transaction-tree markup; any <script>, javascript:, or on*-handler in it is a defect
+      or a hostile payload. Block them at the browser level; the JS sanitizer in
+      webview.js is a second line of defense.
+    -->
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'none'; script-src data:; style-src data: 'unsafe-inline'; img-src data:; connect-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none';"/>
+    <title>DAML Script Results</title>
+    <link rel="stylesheet" type="text/css" href="$webviewCss"/>
+</head>
+<body class="empty hide_archived hide_transaction hidden_disclosure hide_note">
+    <div class="toolbar">
+        <button id="toggle_view" class="primary" onclick="toggle_view()">Show transaction view</button>
+        <label><input type="checkbox" id="show_archived" onchange="show_archived_changed()"/> Show archived</label>
+        <label><input type="checkbox" id="show_detailed_disclosure" onchange="toggle_detailed_disclosure()"/> Show detailed disclosure</label>
+    </div>
+    <div class="empty-message">No script results yet. Run a script in your .daml file to see results here.</div>
+    <div id="note" class="note"></div>
+    <div id="content"></div>
+    <script type="text/javascript" src="$webviewSrc"></script>
+</body>
+</html>
