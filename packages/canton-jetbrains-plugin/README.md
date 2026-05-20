@@ -31,7 +31,8 @@ Use this path when you want to test the plugin in your local JetBrains IDE with 
 4. Install `build/distributions/canton-jetbrains-plugin-0.1.0.zip` via **Settings → Plugins → ⚙ → Install Plugin from Disk…**.
 5. Restart the IDE if prompted.
 6. Open your DAML/Canton project folder.
-7. Open **Settings → Languages & Frameworks → DAML**, choose DAML SDK `3.4.11`, and click **Install selected SDK** if that SDK is not installed yet.
+7. Open **Settings → Languages & Frameworks → DAML**.
+   Click **Install DPM CLI** if `dpm` is not installed, then choose DAML SDK `3.4.11` and click **Install selected SDK** if that SDK is not installed yet.
 8. Run **Tools → Validate Canton/DAML Runtime**.
 9. Open a `.daml` file and confirm highlighting, diagnostics, hover, completion, and go-to-definition.
 10. Run a generated run configuration:
@@ -120,7 +121,7 @@ To install in your real IDE:
 | "Canton not found" | Confirm `canton` is on the active backend PATH, or set the Canton binary path in settings. |
 | "No daml.yaml found" | Open a project containing `daml.yaml` / `multi-package.yaml`; nested DAML packages are discovered automatically. |
 | Script Results panel says "JCEF not available" | On Linux, **Help → Find Action → Choose Boot Java Runtime for the IDE → install with JCEF**. |
-| `dpm` works in plugin run configs but not in a new IDE Terminal tab | Plugin-started LSP/run processes prepend `~/.dpm/bin`, `~/.daml/bin`, and `~/.daml/sdk/<version>/daml` to `PATH`. Regular Terminal tabs inherit your shell/IDE environment, so add `~/.dpm/bin` to your shell profile if you want to type `dpm` there directly. |
+| `dpm` is not found in a new IDE Terminal tab | First confirm DPM is installed. In **Settings → Languages & Frameworks → DAML**, click **Install DPM CLI** if `~/.dpm/bin/dpm` does not exist. Then open a fresh Terminal tab. The plugin prepends `~/.dpm/bin`, `~/.daml/bin`, and `~/.daml/sdk/<version>/daml` through both Terminal process env and JetBrains shell integration, so zsh startup files should not erase it. Existing terminal tabs keep their old environment. |
 | Need logs | Check **Help → Show Log in Finder/Explorer**, the Run tool window, and `build/reports/pluginVerifier` after `./gradlew verifyPlugin`. |
 
 ## Development

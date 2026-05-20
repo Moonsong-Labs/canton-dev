@@ -33,6 +33,7 @@
 	    <depends>com.intellij.modules.json</depends>
 	    <depends>org.jetbrains.plugins.yaml</depends>
 	    <depends>com.redhat.devtools.lsp4ij</depends>
+	    <depends>org.jetbrains.plugins.terminal</depends>
     <depends optional="true" config-file="daml-textmate.xml">org.jetbrains.plugins.textmate</depends>
 
     <resource-bundle>messages.DamlBundle</resource-bundle>
@@ -121,6 +122,10 @@
         </server>
         <languageMapping language="DAML" serverId="daml" languageId="daml"/>
         <fileNamePatternMapping patterns="*.daml" serverId="daml" languageId="daml"/>
+    </extensions>
+
+    <extensions defaultExtensionNs="org.jetbrains.plugins.terminal">
+        <localTerminalCustomizer implementation="com.moonsonglabs.daml.terminal.DamlTerminalCustomizer"/>
     </extensions>
 
     <actions>

@@ -8,6 +8,7 @@ import com.intellij.openapi.components.service
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.SystemInfo
 import com.moonsonglabs.daml.DamlNotifier
 import com.moonsonglabs.daml.runtime.RuntimeEnvironment
 import com.moonsonglabs.daml.settings.DamlProjectSettings
@@ -17,6 +18,54 @@ import java.nio.file.Path
 
 @Service(Service.Level.PROJECT)
 class DamlSdkInstaller(private val project: Project) {
+
+    fun installDpmCli(onFinished: ((String) -> Unit)? = null) {
+        object : Task.Backgroundable(project, "Installing DPM CLI", true) {
+            override fun run(indicator: ProgressIndicator) {
+                RuntimeEnvironment.findExecutable("dpm", DamlProjectSettings.getInstance(project))?.let { existing ->
+                    finish("DPM CLI is already installed at $existing.", onFinished) {
+                        DamlNotifier.info(project, "DPM CLI is already installed at $existing.")
+                    }
+                    return
+                }
+
+                if (SystemInfo.isWindows) {
+                    val message = "Install the DPM CLI with the Windows installer from the Digital Asset docs, then reopen the IDE."
+                    finish(message, onFinished) {
+                        DamlNotifier.warn(project, "$message<br/>Docs: https://docs.digitalasset.com/build/3.4/dpm/dpm.html")
+                    }
+                    return
+                }
+
+                indicator.text = "Running the official DPM installer"
+                val cmd = GeneralCommandLine("sh", "-lc", "curl -sSL https://get.digitalasset.com/install/install.sh | sh -s")
+                    .withCharset(StandardCharsets.UTF_8)
+                RuntimeEnvironment.applyLocalTools(cmd, DamlProjectSettings.getInstance(project))
+
+                val output = CapturingProcessHandler(cmd).runProcess(15 * 60 * 1000)
+                val combinedOutput = listOf(output.stdout, output.stderr)
+                    .joinToString("\n")
+                    .trim()
+                    .takeLast(4000)
+                val dpm = RuntimeEnvironment.findExecutable("dpm", DamlProjectSettings.getInstance(project))
+                val message = when {
+                    output.isTimeout -> "Timed out while installing the DPM CLI."
+                    output.exitCode == 0 && dpm != null -> "DPM CLI installed at $dpm. Open a fresh IDE Terminal tab."
+                    output.exitCode == 0 -> "DPM installer finished. Open a fresh IDE Terminal tab; if dpm is still missing, check the installer output."
+                    combinedOutput.isNotBlank() -> "Failed to install the DPM CLI:<br/><pre>${escapeHtml(combinedOutput)}</pre>"
+                    else -> "Failed to install the DPM CLI with exit code ${output.exitCode}."
+                }
+                finish(message, onFinished) {
+                    if (output.exitCode == 0 && !output.isTimeout) {
+                        DamlProjectSettings.getInstance(project).useDPMWhenAvailable = true
+                        DamlNotifier.info(project, message)
+                    } else {
+                        DamlNotifier.error(project, message)
+                    }
+                }
+            }
+        }.queue()
+    }
 
     fun installSelected(version: String, assistantOverride: String = "", onFinished: ((String) -> Unit)? = null) {
         val normalized = version.trim().ifBlank { DamlSdkVersions.DEFAULT }

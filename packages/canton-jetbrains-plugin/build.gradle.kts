@@ -30,6 +30,7 @@ dependencies {
         bundledPlugin("org.jetbrains.plugins.textmate")
         bundledPlugin("com.intellij.modules.json")
         bundledPlugin("org.jetbrains.plugins.yaml")
+        bundledPlugin("org.jetbrains.plugins.terminal")
 
         pluginVerifier()
         zipSigner()

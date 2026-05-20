@@ -45,6 +45,22 @@ class DamlSettingsComponent(private val project: Project) {
 
     val useDPMCheckbox = JBCheckBox(DamlBundle.message("daml.settings.useDPM.label"))
 
+    private val installDpmButton = JButton(DamlBundle.message("daml.settings.installDpm.button")).apply {
+        toolTipText = DamlBundle.message("daml.settings.installDpm.tooltip")
+        addActionListener {
+            runtimeStatusLabel.text = "Installing DPM CLI..."
+            DamlSdkInstaller.getInstance(project).installDpmCli { status ->
+                runtimeStatusLabel.text = status
+                useDPMCheckbox.isSelected = true
+            }
+        }
+    }
+
+    private val dpmPanel = JPanel(BorderLayout(6, 0)).apply {
+        add(useDPMCheckbox, BorderLayout.CENTER)
+        add(installDpmButton, BorderLayout.EAST)
+    }
+
     val sdkVersionCombo = JComboBox(DamlSdkVersions.choices().toTypedArray()).apply {
         isEditable = true
         toolTipText = DamlBundle.message("daml.settings.sdkVersion.tooltip")
@@ -95,7 +111,7 @@ class DamlSettingsComponent(private val project: Project) {
         .addLabeledComponent(DamlBundle.message("daml.settings.runtimeStatus.label"), runtimeStatusLabel, 1, false)
         .addLabeledComponent(DamlBundle.message("daml.settings.binaryPath.label"), binaryPathField, 1, false)
         .addLabeledComponent(DamlBundle.message("daml.settings.cantonBinaryPath.label"), cantonBinaryPathField, 1, false)
-        .addComponent(useDPMCheckbox, 1)
+        .addComponent(dpmPanel, 1)
         .addLabeledComponent(DamlBundle.message("daml.settings.logLevel.label"), logLevelCombo, 1, false)
         .addLabeledComponent(DamlBundle.message("daml.settings.telemetry.label"), telemetryCombo, 1, false)
         .addComponent(autorunCheckbox, 1)
