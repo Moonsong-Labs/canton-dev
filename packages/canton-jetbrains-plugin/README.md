@@ -10,7 +10,7 @@ v0.1 — local-install beta. Builds a `.zip` artifact suitable for **Settings �
 
 Use this path when you want to test the plugin in your local JetBrains IDE with the local DAML/DPM runtime.
 
-1. Install a JetBrains IDE and the LSP4IJ plugin.
+1. Install a JetBrains IDE, such as RustRover or IntelliJ IDEA, and the LSP4IJ plugin.
 2. Install `dpm` or the DAML assistant if neither exists yet:
 
    ```bash
@@ -28,7 +28,11 @@ Use this path when you want to test the plugin in your local JetBrains IDE with 
    ./gradlew buildPlugin
    ```
 
-4. Install `build/distributions/canton-jetbrains-plugin-0.1.0.zip` via **Settings → Plugins → ⚙ → Install Plugin from Disk…**.
+4. Install `build/distributions/canton-jetbrains-plugin-0.1.0.zip` in your IDE:
+   - Open **Settings / Preferences → Plugins**.
+   - Click the gear icon.
+   - Choose **Install Plugin from Disk…**.
+   - Select the plugin zip.
 5. Restart the IDE if prompted.
 6. Open your DAML/Canton project folder.
 7. Open **Settings → Languages & Frameworks → DAML**.
@@ -70,7 +74,39 @@ Expected success signals:
 - Canton installed locally if you want Canton run configurations (`canton --help` should work, or set the Canton binary override)
 - The [LSP4IJ plugin](https://plugins.jetbrains.com/plugin/23257-lsp4ij) installed in your IDE (it is a runtime dependency; the IDE will offer to install it when you load this plugin)
 
-## Quickstart — building and testing locally
+## Install In A JetBrains IDE
+
+There are two supported beta install paths:
+
+- Local build: build the zip from this repository.
+- Release download: download a versioned zip from the GitHub Release when one exists.
+
+To install a locally built zip:
+
+1. Build the plugin:
+
+   ```bash
+   cd packages/canton-jetbrains-plugin
+   ./gradlew buildPlugin
+   ```
+
+2. Locate the generated zip:
+
+   ```text
+   packages/canton-jetbrains-plugin/build/distributions/canton-jetbrains-plugin-<version>.zip
+   ```
+
+3. In RustRover, IntelliJ IDEA, or another JetBrains IDE, open **Settings / Preferences → Plugins**.
+4. Click the gear icon next to the plugin search field.
+5. Choose **Install Plugin from Disk…**.
+6. Select the generated `canton-jetbrains-plugin-<version>.zip`.
+7. Restart the IDE when prompted.
+8. Open a folder containing `daml.yaml` or `multi-package.yaml`.
+9. Open **Settings / Preferences → Languages & Frameworks → DAML** and validate or install the local runtime.
+
+Do not unzip the plugin archive before installing it. JetBrains expects the `.zip` file directly.
+
+## Quickstart — Building And Testing Locally
 
 The Gradle wrapper is committed; you only need a JDK 21 on your PATH. The wrapper will fetch Gradle 9.2.1 on first run.
 
@@ -93,12 +129,7 @@ java -version            # should report 21.x
 
 If `./gradlew` complains about the JDK, install via [SDKMAN](https://sdkman.io/) (`sdk install java 21-tem`) or download from [Temurin](https://adoptium.net/).
 
-To install in your real IDE:
-1. Run `./gradlew buildPlugin`.
-2. In your IDE: **Settings → Plugins → ⚙ → Install Plugin from Disk…**
-3. Pick `build/distributions/canton-jetbrains-plugin-<version>.zip`.
-4. Restart when prompted.
-5. Open any folder containing a `daml.yaml` or `multi-package.yaml`. The plugin activates automatically.
+After building, install the generated zip through **Settings / Preferences → Plugins → gear icon → Install Plugin from Disk…**. See **Install In A JetBrains IDE** above for the full click path.
 
 ## Verify it's working
 
