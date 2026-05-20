@@ -29,10 +29,3 @@ jobs:
 
       - name: Build plugin
         run: ./gradlew --no-daemon --no-configuration-cache test buildPlugin
-
-      - name: Upload plugin zip
-        uses: actions/upload-artifact@v4
-        with:
-          name: canton-jetbrains-plugin
-          path: packages/canton-jetbrains-plugin/build/distributions/*.zip
-          if-no-files-found: error

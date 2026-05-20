@@ -134,7 +134,7 @@ To install in your real IDE:
 
 ## CI And Releases
 
-- Pull requests touching `packages/canton-jetbrains-plugin/**` run `.github/workflows/test-jetbrains-plugin.yml`, which executes `./gradlew test buildPlugin` and uploads the zip as a CI artifact.
+- Pull requests touching `packages/canton-jetbrains-plugin/**` run `.github/workflows/test-jetbrains-plugin.yml`, which executes `./gradlew test buildPlugin`.
 - Versioned plugin releases use `.github/workflows/release-jetbrains-plugin.yml`.
 - To release from GitHub Actions, run **Release JetBrains Plugin** manually with a version like `0.1.0`.
 - To release from git, push a tag like `canton-jetbrains-plugin-v0.1.0`.
