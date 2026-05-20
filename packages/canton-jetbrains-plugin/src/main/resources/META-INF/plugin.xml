@@ -75,6 +75,14 @@
         <lang.psiStructureViewFactory language="DAML"
                                       implementationClass="com.redhat.devtools.lsp4ij.features.documentSymbol.LSPDocumentSymbolStructureViewFactory"/>
 
+        <psi.referenceContributor language="DAML"
+                                  implementation="com.moonsonglabs.daml.navigation.DamlModuleReferenceContributor"/>
+
+        <gotoDeclarationHandler implementation="com.moonsonglabs.daml.navigation.DamlGotoDeclarationHandler"/>
+
+        <codeInsight.lineMarkerProvider language="DAML"
+                                        implementationClass="com.moonsonglabs.daml.scriptresults.DamlScriptLineMarkerProvider"/>
+
         <liveTemplateContext contextId="DAML"
                              implementation="com.moonsonglabs.daml.snippets.DamlTemplateContextType"/>
         <defaultLiveTemplates file="/snippets/daml-snippets"/>
@@ -145,6 +153,13 @@
 	                class="com.moonsonglabs.daml.actions.ShowScriptResourceAction"
 	                text="Show DAML Script Results"
 	                description="Open DAML script results pushed by the language server"/>
+	        <action id="DAML.ShowScriptResultsForCurrentScript"
+	                class="com.moonsonglabs.daml.actions.RunDamlScriptResultsAction"
+	                text="Show DAML Script Results"
+	                description="Run the DAML script under the caret and show the visual Script Results panel">
+	            <add-to-group group-id="ToolsMenu" anchor="last"/>
+	            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+	        </action>
 	        <action id="DAML.RunBuild"
 	                class="com.moonsonglabs.daml.actions.RunDamlBuildAction"
 	                text="Run DAML Build"

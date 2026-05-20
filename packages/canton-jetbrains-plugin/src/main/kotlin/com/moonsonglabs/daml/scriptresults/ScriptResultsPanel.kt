@@ -2,9 +2,14 @@ package com.moonsonglabs.daml.scriptresults
 
 import com.google.gson.Gson
 import com.intellij.openapi.Disposable
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.thisLogger
+import com.intellij.openapi.editor.ScrollType
+import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.ui.jcef.JBCefApp
 import com.intellij.ui.jcef.JBCefBrowser
 import com.intellij.ui.jcef.JBCefBrowserBase
@@ -15,6 +20,7 @@ import org.cef.browser.CefBrowser
 import org.cef.handler.CefLoadHandlerAdapter
 import java.awt.BorderLayout
 import java.awt.Color
+import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import java.util.Base64
 import javax.swing.JLabel
@@ -24,9 +30,10 @@ import javax.swing.SwingConstants
 /**
  * The Script Results panel.
  *
- * Renders server-pushed HTML in a JCEF browser, exposing the same four-message bridge that
+ * Renders server-pushed HTML in a JCEF browser, exposing the same host/webview bridge that
  * VSCode's webview uses (`set_show_archived`, `set_show_detailed_disclosure`,
- * `set_selected_view`, plus host→guest `set_view`/`add_note`).
+ * `set_selected_view`, plus host→guest `set_view`/`add_note`) and adapting VSCode's
+ * `command:daml.revealLocation` source links for JetBrains.
  *
  * If JCEF is unavailable on this IDE (e.g. on Linux without the JCEF runtime), falls back
  * to a plain-text label so the panel doesn't crash.
@@ -142,11 +149,47 @@ class ScriptResultsPanel(private val project: Project) : JPanel(BorderLayout()),
             when (map["command"] as? String) {
                 "set_show_archived" -> s.showArchived = (map["value"] as? Boolean) ?: false
                 "set_show_detailed_disclosure" -> s.showDetailedDisclosure = (map["value"] as? Boolean) ?: false
-                "set_selected_view" -> s.selectedView = (map["value"] as? String) ?: "transaction"
+                "set_selected_view" -> s.selectedView = (map["value"] as? String) ?: "table"
+                "reveal_location" -> revealLocation(map["value"] as? String)
                 else -> thisLogger().debug("Unhandled host message: $raw")
             }
         } catch (t: Throwable) {
             thisLogger().warn("Failed to handle host message: $raw", t)
         }
     }
+
+    private fun revealLocation(commandUri: String?) {
+        val args = parseRevealLocationArgs(commandUri) ?: return
+        val file = VirtualFileManager.getInstance().findFileByUrl(args.uri) ?: return
+        ApplicationManager.getApplication().invokeLater {
+            val line = args.startLine.coerceAtLeast(0)
+            val editor = FileEditorManager.getInstance(project).openTextEditor(
+                OpenFileDescriptor(project, file, line, 0),
+                true
+            )
+            if (editor != null && editor.document.lineCount > 0) {
+                val startLine = args.startLine.coerceIn(0, editor.document.lineCount - 1)
+                val endLine = args.endLine.coerceIn(startLine, editor.document.lineCount - 1)
+                val startOffset = editor.document.getLineStartOffset(startLine)
+                val endOffset = editor.document.getLineEndOffset(endLine)
+                editor.caretModel.moveToOffset(startOffset)
+                editor.selectionModel.setSelection(startOffset, endOffset)
+                editor.scrollingModel.scrollToCaret(ScrollType.CENTER)
+            }
+        }
+    }
+
+    private fun parseRevealLocationArgs(commandUri: String?): RevealLocationArgs? {
+        if (commandUri == null || !commandUri.startsWith("command:daml.revealLocation")) return null
+        val encodedArgs = commandUri.substringAfter('?', "")
+        if (encodedArgs.isBlank()) return null
+        val decoded = URLDecoder.decode(encodedArgs, StandardCharsets.UTF_8)
+        val values = gson.fromJson(decoded, List::class.java)
+        val uri = values.getOrNull(0) as? String ?: return null
+        val startLine = (values.getOrNull(1) as? Number)?.toInt() ?: 0
+        val endLine = (values.getOrNull(2) as? Number)?.toInt() ?: startLine
+        return RevealLocationArgs(uri, startLine, endLine)
+    }
+
+    private data class RevealLocationArgs(val uri: String, val startLine: Int, val endLine: Int)
 }

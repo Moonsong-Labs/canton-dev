@@ -1,11 +1,19 @@
 package com.moonsonglabs.daml.scriptresults
 
+import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.service
+import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowManager
+import com.moonsonglabs.daml.lsp.DamlServerInterface
+import com.redhat.devtools.lsp4ij.LanguageServerManager
+import org.eclipse.lsp4j.DidCloseTextDocumentParams
+import org.eclipse.lsp4j.DidOpenTextDocumentParams
+import org.eclipse.lsp4j.TextDocumentIdentifier
+import org.eclipse.lsp4j.TextDocumentItem
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.ConcurrentHashMap
@@ -15,17 +23,18 @@ import java.util.concurrent.ConcurrentHashMap
  * dispatches server-pushed `daml/virtualResource/...` notifications to the matching
  * [ScriptResultsPanel].
  *
- * Why only one panel in v1: LSP4IJ does not yet expose a stable client-side hook for
- * `daml.showResource` code-lens clicks, so we cannot reliably tell *which* resource the
- * user wants foregrounded. We therefore display whichever URI most recently changed; the
- * tool window opens automatically on the first update. Per-URI tabs are deferred to v2.
+ * Why only one panel in v1: VSCode opens one webview panel per resource, but a single
+ * JetBrains tool window keeps the beta simple and avoids tab lifecycle surprises. We close
+ * the previously active virtual resource when a new one is shown; per-resource tabs are
+ * deferred to v2.
  */
 @Service(Service.Level.PROJECT)
-class VirtualResourceManager(private val project: Project) {
+class VirtualResourceManager(private val project: Project) : Disposable {
 
     private data class Resource(var html: String = "", var note: String = "", var progressMs: Long = -1)
 
     private val resources = ConcurrentHashMap<String, Resource>()
+    @Volatile private var activeUri: String? = null
 
     fun update(uri: String, html: String) {
         resources.computeIfAbsent(uri) { Resource() }.html = html
@@ -46,10 +55,13 @@ class VirtualResourceManager(private val project: Project) {
     }
 
     /**
-     * Bring the panel to the front and rehydrate it for [uri]. Reserved for a future
-     * `daml.showResource` command handler; safe to call directly from tests.
+     * Bring the panel to the front, rehydrate it for [uri], and notify `damlc ide` that the
+     * virtual resource is open. The official VSCode extension also drives Script Results by
+     * opening a `daml://compiler?...` document; the server then pushes HTML through
+     * `daml/virtualResource/...` notifications.
      */
     fun showResource(title: String, uri: String) {
+        openVirtualResource(uri)
         ApplicationManager.getApplication().invokeLater {
             val tw = toolWindow() ?: return@invokeLater
             tw.show()
@@ -60,6 +72,56 @@ class VirtualResourceManager(private val project: Project) {
                 if (it.note.isNotEmpty()) panel.setNote(it.note)
             }
         }
+    }
+
+    override fun dispose() {
+        activeUri?.let(::closeVirtualResource)
+        activeUri = null
+    }
+
+    private fun openVirtualResource(uri: String) {
+        val previous = activeUri
+        if (previous == uri) return
+        activeUri = uri
+        previous?.let(::closeVirtualResource)
+        sendToTextDocumentService(uri, "open") { server ->
+            if (activeUri == uri) {
+                server.textDocumentService.didOpen(
+                    DidOpenTextDocumentParams(TextDocumentItem(uri, "", 0, ""))
+                )
+            }
+        }
+    }
+
+    private fun closeVirtualResource(uri: String) {
+        sendToTextDocumentService(uri, "close") { server ->
+            server.textDocumentService.didClose(
+                DidCloseTextDocumentParams(TextDocumentIdentifier(uri))
+            )
+        }
+    }
+
+    private fun sendToTextDocumentService(
+        uri: String,
+        operation: String,
+        block: (DamlServerInterface) -> Unit
+    ) {
+        if (project.isDisposed) return
+        LanguageServerManager.getInstance(project)
+            .getLanguageServer("daml")
+            .thenAccept { item ->
+                if (project.isDisposed) return@thenAccept
+                val server = item?.server as? DamlServerInterface ?: return@thenAccept
+                try {
+                    block(server)
+                } catch (t: Throwable) {
+                    thisLogger().warn("Failed to $operation DAML virtual resource $uri", t)
+                }
+            }
+            .exceptionally { t ->
+                thisLogger().warn("Failed to resolve DAML language server to $operation virtual resource $uri", t)
+                null
+            }
     }
 
     private fun applyOnEdt(uri: String, block: (ScriptResultsPanel) -> Unit) {

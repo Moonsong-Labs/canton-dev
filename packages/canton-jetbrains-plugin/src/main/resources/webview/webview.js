@@ -25,7 +25,8 @@ const vscode = {
 function sanitizeAndAssign(target, html) {
   const tmpl = document.createElement('template');
   tmpl.innerHTML = String(html == null ? '' : html);
-  const walker = document.createTreeWalker(tmpl.content, NodeFilter.SHOW_ELEMENT);
+  const source = tmpl.content.querySelector('body') || tmpl.content;
+  const walker = document.createTreeWalker(source, NodeFilter.SHOW_ELEMENT);
   const drop = [];
   while (walker.nextNode()) {
     const el = walker.currentNode;
@@ -48,8 +49,51 @@ function sanitizeAndAssign(target, html) {
   }
   drop.forEach(el => el.remove());
   target.replaceChildren();
+  removeEmbeddedToolbar(source);
   // Move children into target (no further parsing).
-  while (tmpl.content.firstChild) target.appendChild(tmpl.content.firstChild);
+  while (source.firstChild) target.appendChild(source.firstChild);
+  pruneEmptyText(target);
+}
+
+function removeEmbeddedToolbar(root) {
+  const embeddedControlSelector = [
+    '#show_archived',
+    '#show_detailed_disclosure',
+    'button'
+  ].join(',');
+  for (const el of Array.from(root.querySelectorAll(embeddedControlSelector))) {
+    const text = (el.textContent || '').trim();
+    const isKnownButton = el.tagName.toLowerCase() === 'button' &&
+      /^(show table view|show transaction view|toggle table\/transaction view)$/i.test(text);
+    const isKnownInput = el.id === 'show_archived' || el.id === 'show_detailed_disclosure';
+    if (!isKnownButton && !isKnownInput) continue;
+    const label = el.closest('label');
+    if (isKnownInput && !label) {
+      removeAdjacentText(el, el.id === 'show_archived' ? /show archived/i : /show detailed disclosure/i);
+    }
+    const candidate = label || el;
+    candidate.remove();
+  }
+  for (const el of Array.from(root.querySelectorAll('br'))) {
+    const previous = el.previousSibling && String(el.previousSibling.textContent || '').trim();
+    const next = el.nextSibling && String(el.nextSibling.textContent || '').trim();
+    if (!previous && !next) el.remove();
+  }
+}
+
+function removeAdjacentText(element, pattern) {
+  for (const siblingKey of ['previousSibling', 'nextSibling']) {
+    const sibling = element[siblingKey];
+    if (sibling && sibling.nodeType === Node.TEXT_NODE && pattern.test(sibling.textContent || '')) {
+      sibling.remove();
+    }
+  }
+}
+
+function pruneEmptyText(root) {
+  for (const node of Array.from(root.childNodes)) {
+    if (node.nodeType === Node.TEXT_NODE && !node.textContent.trim()) node.remove();
+  }
 }
 
 function toggleCheckbox(checkboxId, classId, cmdId) {
@@ -69,6 +113,7 @@ function toggle_detailed_disclosure() {
 function toggle_view() {
   document.body.classList.toggle('hide_transaction');
   document.body.classList.toggle('hide_table');
+  updateToggleLabel();
   vscode.postMessage({
     command: 'set_selected_view',
     value: document.body.classList.contains('hide_transaction') ? 'table' : 'transaction'
@@ -78,6 +123,15 @@ function toggle_view() {
 function setHtmlContent(html) {
   document.body.classList.remove('empty');
   sanitizeAndAssign(document.getElementById('content'), html);
+  updateToggleLabel();
+}
+
+function updateToggleLabel() {
+  const button = document.getElementById('toggle_view');
+  if (!button) return;
+  button.textContent = document.body.classList.contains('hide_transaction')
+    ? 'Show transaction view'
+    : 'Show table view';
 }
 
 window.addEventListener('message', function (event) {
@@ -114,6 +168,16 @@ window.addEventListener('message', function (event) {
       }
       showOrHideClassWithName(message.value.showArchived, 'show_archived', 'hide_archived', 'show_archived');
       showOrHideClassWithName(message.value.showDetailedDisclosure, 'show_disclosure', 'hidden_disclosure', 'show_detailed_disclosure');
+      updateToggleLabel();
       break;
   }
+});
+
+document.addEventListener('click', function (event) {
+  const target = event.target && event.target.closest ? event.target.closest('a[href]') : null;
+  if (!target) return;
+  const href = target.getAttribute('href') || '';
+  if (!href.startsWith('command:daml.revealLocation')) return;
+  event.preventDefault();
+  vscode.postMessage({ command: 'reveal_location', value: href });
 });

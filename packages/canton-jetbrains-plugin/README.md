@@ -48,13 +48,15 @@ Expected success signals:
 
 - LSP4IJ shows the DAML Language Server as running.
 - `.daml` files show diagnostics and hover tooltips.
-- Clicking a DAML `Script results` code lens opens the **DAML Script Results** tool window.
+- Clicking a DAML `Script results` code lens, or running **Tools → Show DAML Script Results** from a `.daml` file, opens the **DAML Script Results** tool window.
+- In table view, **Show detailed disclosure** expands party visibility from `X` into `S` signatory, `O` observer, `W` witness, and `D` divulgence markers.
 - The Run tool window shows DAML/Canton command output and exit status.
 
 ## Features
 
 - Syntax highlighting for `.daml` files via a native lexer; LSP semantic tokens layer on top once the server responds
 - Diagnostics, hover, go-to-definition, completion, document symbols, rename — all via the official DAML LSP
+- Local fallback navigation for DAML imports, so Ctrl/Cmd-click on `import Some.Module.Name` opens the matching `module`, and explicit import-list symbols like `import Some.Module (Thing)` jump to the local `Thing` declaration when available
 - DAML's signature **Script Results** panel (rendered in a JCEF webview, mirroring the VSCode experience)
 - `daml.yaml` and `multi-package.yaml` JSON-schema completion
 - DAML run configurations for build, test, script, and start
@@ -109,7 +111,7 @@ To install in your real IDE:
 - Introduce a type error → red squiggle within ~2 s.
 - Hover any identifier → inferred type tooltip.
 - `Cmd/Ctrl+Click` an identifier → jumps to definition.
-- File with a `script` decl → "Script results" code lens; click → bottom **DAML Script Results** tool window opens.
+- File with a `script` decl → "Script results" code lens if Code Vision is enabled, or the run gutter icon next to the script name; click it, or use **Tools → Show DAML Script Results** → bottom **DAML Script Results** tool window opens and refreshes as the script reruns.
 
 ## Common first-run issues
 

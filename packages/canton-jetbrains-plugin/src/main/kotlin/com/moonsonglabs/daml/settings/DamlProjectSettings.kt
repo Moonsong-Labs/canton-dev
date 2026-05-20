@@ -29,7 +29,7 @@ class DamlProjectSettings : PersistentStateComponent<DamlProjectSettings.State> 
         var multiPackageIdeSupport: Boolean = false,
         var showArchived: Boolean = false,
         var showDetailedDisclosure: Boolean = false,
-        var selectedView: String = "transaction"
+        var selectedView: String = "table"
     )
 
     private var state = State()
@@ -81,7 +81,7 @@ class DamlProjectSettings : PersistentStateComponent<DamlProjectSettings.State> 
         set(value) { state.showDetailedDisclosure = value }
     var selectedView: String
         get() = state.selectedView
-        set(value) { state.selectedView = value }
+        set(value) { state.selectedView = value.takeIf { it == "table" || it == "transaction" } ?: "table" }
 
     companion object {
         fun getInstance(project: Project): DamlProjectSettings = project.service()
