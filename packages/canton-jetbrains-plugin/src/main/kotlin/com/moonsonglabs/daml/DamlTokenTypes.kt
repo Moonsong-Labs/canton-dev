@@ -37,6 +37,14 @@ object DamlTokenTypes {
 
     @JvmField val BAD_CHARACTER = DamlTokenType("BAD_CHARACTER")
 
+    @JvmField val MODULE_DECL = DamlTokenType("MODULE_DECL")
+    @JvmField val IMPORT_DECL = DamlTokenType("IMPORT_DECL")
+    @JvmField val TEMPLATE_DECL = DamlTokenType("TEMPLATE_DECL")
+    @JvmField val CHOICE_DECL = DamlTokenType("CHOICE_DECL")
+    @JvmField val INTERFACE_DECL = DamlTokenType("INTERFACE_DECL")
+    @JvmField val DATA_DECL = DamlTokenType("DATA_DECL")
+    @JvmField val TYPE_DECL = DamlTokenType("TYPE_DECL")
+
     @JvmField val FILE = IFileElementType("DAML_FILE", DamlLanguage)
 
     @JvmField

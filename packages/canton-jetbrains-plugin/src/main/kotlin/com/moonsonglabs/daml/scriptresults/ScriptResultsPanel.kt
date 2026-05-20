@@ -7,6 +7,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import com.intellij.ui.jcef.JBCefApp
 import com.intellij.ui.jcef.JBCefBrowser
+import com.intellij.ui.jcef.JBCefBrowserBase
 import com.intellij.ui.jcef.JBCefJSQuery
 import com.moonsonglabs.daml.DamlBundle
 import com.moonsonglabs.daml.settings.DamlProjectSettings
@@ -52,7 +53,7 @@ class ScriptResultsPanel(private val project: Project) : JPanel(BorderLayout()),
             // Tie native CEF browser + JS query lifetimes to this panel so they're released
             // when the tool window content is removed (project close, plugin reload, etc).
             Disposer.register(this, b)
-            val q = JBCefJSQuery.create(b)
+            val q = JBCefJSQuery.create(b as JBCefBrowserBase)
             jsQuery = q
             Disposer.register(this, q)
             q.addHandler { raw -> handleHostMessage(raw); null }

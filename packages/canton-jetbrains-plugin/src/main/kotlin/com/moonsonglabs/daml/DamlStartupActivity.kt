@@ -3,8 +3,7 @@ package com.moonsonglabs.daml
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
 import com.moonsonglabs.daml.lsp.DamlBinaryLocator
-import java.nio.file.Files
-import java.nio.file.Paths
+import com.moonsonglabs.daml.workspace.DamlWorkspaceService
 
 /**
  * On project open: detect whether the workspace is a DAML project (has daml.yaml at any
@@ -13,12 +12,9 @@ import java.nio.file.Paths
  * Why: the LSP server itself produces empty diagnostics if cwd is not a daml project root,
  * which is confusing. Failing fast with a clear message is the kinder default.
  */
-class DamlStartupActivity : ProjectActivity {
+    class DamlStartupActivity : ProjectActivity {
     override suspend fun execute(project: Project) {
-        val basePath = project.basePath ?: return
-        val damlYaml = Paths.get(basePath, "daml.yaml")
-        val multiPkg = Paths.get(basePath, "multi-package.yaml")
-        val hasDaml = Files.exists(damlYaml) || Files.exists(multiPkg)
+        val hasDaml = DamlWorkspaceService.getInstance(project).discoverWorkspaces().isNotEmpty()
         if (!hasDaml) return
 
         val binary = DamlBinaryLocator.locate(project)

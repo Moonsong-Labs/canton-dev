@@ -4,7 +4,52 @@ DAML language support for JetBrains IDEs (IntelliJ IDEA Community/Ultimate, WebS
 
 ## Status
 
-v0.1 — local-install only. Builds a `.zip` artifact suitable for **Settings → Plugins → ⚙ → Install Plugin from Disk…**. No Marketplace publishing yet.
+v0.1 — local-install beta. Builds a `.zip` artifact suitable for **Settings → Plugins → ⚙ → Install Plugin from Disk…**. No Marketplace publishing yet.
+
+## Super Quick Start
+
+Use this path when you want to test the plugin in your local JetBrains IDE with a local DAML SDK.
+
+1. Install a JetBrains IDE and the LSP4IJ plugin.
+2. Install DAML SDK `3.4.11` locally, or confirm it already exists:
+
+   ```bash
+   daml install 3.4.11
+   /Users/eze/.daml/sdk/3.4.11/daml/daml version
+   ```
+
+3. Build the plugin zip:
+
+   ```bash
+   cd packages/canton-jetbrains-plugin
+   ./gradlew buildPlugin
+   ```
+
+4. Install `build/distributions/canton-jetbrains-plugin-0.1.0.zip` via **Settings → Plugins → ⚙ → Install Plugin from Disk…**.
+5. Restart the IDE if prompted.
+6. Open your DAML/Canton project folder.
+7. Run **Tools → Validate Canton/DAML Runtime**. A local runtime is OK; devcontainer is optional.
+8. Open a `.daml` file and confirm highlighting, diagnostics, hover, completion, and go-to-definition.
+9. Run a generated run configuration:
+    - `DAML Build` from `daml.yaml` or `multi-package.yaml`
+    - `DAML Script` from a `.daml` file with a script declaration
+    - `Canton Config` from a `.conf` file
+    - `Canton Script` from a `.canton` or `.canton.sc` file
+
+Optional devcontainer path:
+
+1. Install Docker and use a JetBrains IDE with Dev Containers support.
+2. Run **Tools → Prepare Canton/DAML Devcontainer**.
+3. Reopen the project using JetBrains Dev Containers and pick the generated `.devcontainer/devcontainer.json`.
+4. Run **Tools → Validate Canton/DAML Runtime**.
+5. Enable **Require Canton/DAML devcontainer runtime for run configurations** only if you want run configs to refuse local execution.
+
+Expected success signals:
+
+- LSP4IJ shows the DAML Language Server as running.
+- `.daml` files show diagnostics and hover tooltips.
+- Clicking a DAML `Script results` code lens opens the **DAML Script Results** tool window.
+- The Run tool window shows DAML/Canton command output and exit status.
 
 ## Features
 
@@ -12,19 +57,24 @@ v0.1 — local-install only. Builds a `.zip` artifact suitable for **Settings �
 - Diagnostics, hover, go-to-definition, completion, document symbols, rename — all via the official DAML LSP
 - DAML's signature **Script Results** panel (rendered in a JCEF webview, mirroring the VSCode experience)
 - `daml.yaml` and `multi-package.yaml` JSON-schema completion
+- DAML run configurations for build, test, script, and start
+- Canton config/script highlighting and run configurations for `.conf`, `.canton`, and `.canton.sc`
+- Bundled Canton/DAML devcontainer template for reproducible local beta testing
 - Live templates (`template`, `choice`, `signatory`, `script`, …)
-- Per-project settings: binary path, log level, telemetry, extra args, multi-package mode
+- Per-project settings: devcontainer profile, runtime validation, DAML/DPM/Canton binary paths, log level, telemetry, extra args, multi-package mode
+- DAML LSP currently uses stable single-package `damlc ide`; root `multi-package.yaml` projects fall back to the active or first nested `daml.yaml` package workspace.
 - The upstream DAML TextMate grammar is bundled at `resources/grammars/daml.tmLanguage.xml` for users who want to register it manually via **Settings → Editor → TextMate Bundles** (not auto-registered)
 
 ## Prerequisites
 
 - A JetBrains IDE on **2025.2** or newer
-- The DAML SDK installed locally (`daml --version` should work in your shell)
+- Docker, only if you use the bundled devcontainer
+- The DAML SDK/Canton runtime installed in the active IDE backend (`daml --version` and `canton --help` should work there)
 - The [LSP4IJ plugin](https://plugins.jetbrains.com/plugin/23257-lsp4ij) installed in your IDE (it is a runtime dependency; the IDE will offer to install it when you load this plugin)
 
 ## Quickstart — building and testing locally
 
-The Gradle wrapper is committed; you only need a JDK 21 on your PATH. The wrapper will fetch Gradle 9.0.2 on first run.
+The Gradle wrapper is committed; you only need a JDK 21 on your PATH. The wrapper will fetch Gradle 9.2.1 on first run.
 
 ```bash
 cd packages/canton-jetbrains-plugin
@@ -50,7 +100,7 @@ To install in your real IDE:
 2. In your IDE: **Settings → Plugins → ⚙ → Install Plugin from Disk…**
 3. Pick `build/distributions/canton-jetbrains-plugin-<version>.zip`.
 4. Restart when prompted.
-5. Open any folder containing a `daml.yaml`. The plugin activates automatically.
+5. Open any folder containing a `daml.yaml` or `multi-package.yaml`. The plugin activates automatically.
 
 ## Verify it's working
 
@@ -65,10 +115,16 @@ To install in your real IDE:
 
 | Symptom | Fix |
 |---|---|
-| "DAML SDK not found" | Install the SDK (`curl -sSL https://get.daml.com/ \| sh`) or set the binary path in **Settings → Languages & Frameworks → DAML**. |
-| "No daml.yaml found" | Open the *subdirectory* containing `daml.yaml` as the project root. |
+| Plugin zip not found | Run `./gradlew buildPlugin`; install `build/distributions/canton-jetbrains-plugin-0.1.0.zip`. |
+| LSP4IJ missing | Install the LSP4IJ plugin from JetBrains Marketplace, then restart the IDE. |
+| "Not running inside the Canton/DAML devcontainer" | This only blocks run configurations when **Require Canton/DAML devcontainer runtime for run configurations** is enabled. Disable it for local SDK testing, or reopen the project with JetBrains Dev Containers. |
+| `Unable to start language server: ProcessStreamConnectionProvider ... ~/.daml/bin/daml ... multi-ide` | Reinstall the latest plugin zip. For host testing, the plugin now prefers the pinned SDK assistant, for example `~/.daml/sdk/3.4.11/daml/daml`, over stale `~/.daml/bin/daml` symlinks. |
+| `Unable to start language server ... damlc multi-ide ...` | Reinstall the latest plugin zip. The beta now avoids `damlc multi-ide` for LSP startup and uses stable `damlc ide` from a nested package workspace. |
+| "DAML SDK not found" | Confirm `daml` or `dpm` is on the active backend PATH, or set the binary path in **Settings → Languages & Frameworks → DAML**. |
+| "Canton not found" | Confirm `canton` is on the active backend PATH, or set the Canton binary path in settings. |
+| "No daml.yaml found" | Open a project containing `daml.yaml` / `multi-package.yaml`; nested DAML packages are discovered automatically. |
 | Script Results panel says "JCEF not available" | On Linux, **Help → Find Action → Choose Boot Java Runtime for the IDE → install with JCEF**. |
-| LSP4IJ missing | The IDE prompt should offer to install it; otherwise install from the JetBrains Marketplace manually. |
+| Need logs | Check **Help → Show Log in Finder/Explorer**, the Run tool window, and `build/reports/pluginVerifier` after `./gradlew verifyPlugin`. |
 
 ## Development
 

@@ -17,6 +17,8 @@ repositories {
 }
 
 dependencies {
+    testImplementation("junit:junit:4.13.2")
+
     intellijPlatform {
         create(properties("platformType").get(), properties("platformVersion").get())
 
@@ -27,6 +29,7 @@ dependencies {
         // matching <depends> from plugin.xml.
         bundledPlugin("org.jetbrains.plugins.textmate")
         bundledPlugin("com.intellij.modules.json")
+        bundledPlugin("org.jetbrains.plugins.yaml")
 
         pluginVerifier()
         zipSigner()

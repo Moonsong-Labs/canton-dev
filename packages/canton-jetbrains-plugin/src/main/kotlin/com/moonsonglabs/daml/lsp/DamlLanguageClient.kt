@@ -6,6 +6,7 @@ import com.moonsonglabs.daml.DamlBundle
 import com.moonsonglabs.daml.DamlNotifier
 import com.moonsonglabs.daml.scriptresults.VirtualResourceManager
 import com.redhat.devtools.lsp4ij.LanguageServerManager
+import com.redhat.devtools.lsp4ij.LanguageServerManager.StopOptions
 import com.redhat.devtools.lsp4ij.ServerStatus
 import com.redhat.devtools.lsp4ij.client.LanguageClientImpl
 import org.eclipse.lsp4j.jsonrpc.services.JsonNotification
@@ -72,8 +73,9 @@ class DamlLanguageClient(project: Project) : LanguageClientImpl(project) {
                                 DamlNotifier.warn(
                                     project,
                                     DamlBundle.message("daml.notification.server.unresponsive"))
-                                LanguageServerManager.getInstance(project).stop("daml")
-                                LanguageServerManager.getInstance(project).start("daml")
+                                val mgr = LanguageServerManager.getInstance(project)
+                                mgr.stop("daml", StopOptions().setWillDisable(false))
+                                mgr.start("daml")
                             }
                         }
                 }

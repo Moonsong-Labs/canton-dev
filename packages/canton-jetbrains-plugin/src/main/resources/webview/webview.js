@@ -5,20 +5,19 @@
 // JCEF host bridges window.jbBridge to the JetBrains plugin. This file replaces
 // VSCode's acquireVsCodeApi() with a thin shim that posts to jbBridge.
 
-const vscode = (function () {
-  if (typeof window.jbBridge !== 'undefined' && typeof window.jbBridge.postMessage === 'function') {
-    return {
-      postMessage: function (msg) {
-        try {
-          window.jbBridge.postMessage(JSON.stringify(msg));
-        } catch (e) {
-          console.error('jbBridge.postMessage failed', e);
-        }
+const vscode = {
+  postMessage: function (msg) {
+    if (typeof window.jbBridge !== 'undefined' && typeof window.jbBridge.postMessage === 'function') {
+      try {
+        window.jbBridge.postMessage(JSON.stringify(msg));
+        return;
+      } catch (e) {
+        console.error('jbBridge.postMessage failed', e);
       }
-    };
+    }
+    console.log('msg (no bridge):', msg);
   }
-  return { postMessage: function (m) { console.log('msg (no bridge):', m); } };
-})();
+};
 
 // Strips <script> tags, on* event handlers, and javascript:/data: URIs from server-pushed
 // HTML before insertion. Defense in depth alongside the page-level CSP — both must agree

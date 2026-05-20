@@ -21,7 +21,12 @@ class DamlProjectSettings : PersistentStateComponent<DamlProjectSettings.State> 
         var telemetry: String = "opt-out",
         var autorunAllTests: Boolean = false,
         var extraArguments: String = "",
-        var multiPackageIdeSupport: Boolean = true,
+        var cantonBinaryPath: String = "",
+        var cantonExtraArguments: String = "",
+        var devcontainerProfile: String = "bundled-3.4.11",
+        var requireDevcontainerRuntime: Boolean = false,
+        var lastRuntimeValidation: String = "Not validated",
+        var multiPackageIdeSupport: Boolean = false,
         var showArchived: Boolean = false,
         var showDetailedDisclosure: Boolean = false,
         var selectedView: String = "transaction"
@@ -50,6 +55,21 @@ class DamlProjectSettings : PersistentStateComponent<DamlProjectSettings.State> 
     var extraArguments: String
         get() = state.extraArguments
         set(value) { state.extraArguments = value }
+    var cantonBinaryPath: String
+        get() = state.cantonBinaryPath
+        set(value) { state.cantonBinaryPath = value }
+    var cantonExtraArguments: String
+        get() = state.cantonExtraArguments
+        set(value) { state.cantonExtraArguments = value }
+    var devcontainerProfile: String
+        get() = state.devcontainerProfile
+        set(value) { state.devcontainerProfile = value }
+    var requireDevcontainerRuntime: Boolean
+        get() = state.requireDevcontainerRuntime
+        set(value) { state.requireDevcontainerRuntime = value }
+    var lastRuntimeValidation: String
+        get() = state.lastRuntimeValidation
+        set(value) { state.lastRuntimeValidation = value }
     var multiPackageIdeSupport: Boolean
         get() = state.multiPackageIdeSupport
         set(value) { state.multiPackageIdeSupport = value }

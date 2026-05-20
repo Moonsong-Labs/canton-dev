@@ -3,6 +3,7 @@ package com.moonsonglabs.daml.lsp
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.SystemInfo
 import com.moonsonglabs.daml.settings.DamlProjectSettings
+import java.io.File
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -25,7 +26,7 @@ object DamlBinaryLocator {
         enum class Flavor { DAML, DPM }
     }
 
-    fun locate(project: Project): Resolution? {
+    fun locate(project: Project, workspaceRoot: Path? = null): Resolution? {
         val settings = DamlProjectSettings.getInstance(project)
         settings.binaryPath.takeIf { it.isNotBlank() }?.let { override ->
             val p = Paths.get(override)
@@ -34,11 +35,18 @@ object DamlBinaryLocator {
                              else Resolution.Flavor.DAML
                 return Resolution(p, flavor)
             }
+            return null
         }
 
         if (settings.useDPMWhenAvailable) {
             findOnPath("dpm")?.let { return Resolution(it, Resolution.Flavor.DPM) }
             wellKnown(".dpm/bin/dpm")?.let { return Resolution(it, Resolution.Flavor.DPM) }
+        }
+
+        workspaceSdkVersion(workspaceRoot)?.let { sdkVersion ->
+            wellKnown(".daml/sdk/$sdkVersion/daml/daml")?.let {
+                return Resolution(it, Resolution.Flavor.DAML)
+            }
         }
 
         findOnPath("daml")?.let { return Resolution(it, Resolution.Flavor.DAML) }
@@ -47,10 +55,59 @@ object DamlBinaryLocator {
         return null
     }
 
+    internal fun workspaceSdkVersion(workspaceRoot: Path?): String? {
+        if (workspaceRoot == null) return null
+        manifestSdkVersion(workspaceRoot.resolve("daml.yaml"))?.let { return it }
+        manifestSdkVersion(workspaceRoot.resolve("multi-package.yaml"))?.let { return it }
+
+        val multiPackage = workspaceRoot.resolve("multi-package.yaml")
+        if (!Files.isRegularFile(multiPackage)) return null
+        val packageRoots = multiPackagePackageRoots(multiPackage, workspaceRoot)
+        return packageRoots.asSequence()
+            .mapNotNull { manifestSdkVersion(it.resolve("daml.yaml")) }
+            .firstOrNull()
+    }
+
+    private fun manifestSdkVersion(path: Path): String? {
+        if (!Files.isRegularFile(path)) return null
+        return Files.readAllLines(path).firstNotNullOfOrNull { line ->
+            val trimmed = line.trim()
+            val keyEnd = trimmed.indexOf(':')
+            if (keyEnd <= 0) return@firstNotNullOfOrNull null
+            val key = trimmed.substring(0, keyEnd)
+            if (key != "sdk-version" && key != "daml-version") return@firstNotNullOfOrNull null
+            trimmed.substring(keyEnd + 1)
+                .trim()
+                .trim('"', '\'')
+                .takeIf { it.isNotBlank() }
+        }
+    }
+
+    private fun multiPackagePackageRoots(multiPackage: Path, workspaceRoot: Path): List<Path> {
+        var inPackages = false
+        val roots = mutableListOf<Path>()
+        Files.readAllLines(multiPackage).forEach { line ->
+            val trimmed = line.trim()
+            when {
+                trimmed == "packages:" -> inPackages = true
+                inPackages && trimmed.startsWith("-") -> {
+                    val raw = trimmed.removePrefix("-")
+                        .trim()
+                        .trim('"', '\'')
+                    if (raw.isNotBlank()) roots.add(workspaceRoot.resolve(raw).normalize())
+                }
+                inPackages && trimmed.isNotBlank() && !line.startsWith(" ") && !line.startsWith("\t") -> {
+                    inPackages = false
+                }
+            }
+        }
+        return roots
+    }
+
     private fun findOnPath(name: String): Path? {
         val pathEnv = System.getenv("PATH") ?: return null
         val exeNames = if (SystemInfo.isWindows) listOf("$name.exe", "$name.bat", "$name.cmd", name) else listOf(name)
-        for (dir in pathEnv.split(java.io.File.pathSeparator)) {
+        for (dir in pathEnv.split(File.pathSeparator)) {
             if (dir.isBlank()) continue
             for (exe in exeNames) {
                 val p = Paths.get(dir, exe)

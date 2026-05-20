@@ -5,6 +5,7 @@ import com.intellij.openapi.options.Configurable
 import com.intellij.openapi.project.Project
 import com.moonsonglabs.daml.DamlNotifier
 import com.redhat.devtools.lsp4ij.LanguageServerManager
+import com.redhat.devtools.lsp4ij.LanguageServerManager.StopOptions
 import javax.swing.JComponent
 
 class DamlSettingsConfigurable(private val project: Project) : Configurable {
@@ -30,7 +31,7 @@ class DamlSettingsConfigurable(private val project: Project) : Configurable {
         // binary path or LSP4IJ runtime error doesn't disappear silently.
         val mgr = LanguageServerManager.getInstance(project)
         try {
-            mgr.stop("daml")
+            mgr.stop("daml", StopOptions().setWillDisable(false))
         } catch (t: Throwable) {
             thisLogger().info("DAML LSP stop on settings apply: ${t.message}")
         }

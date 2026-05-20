@@ -3,6 +3,7 @@ package com.moonsonglabs.daml.lsp
 import com.intellij.openapi.project.Project
 import com.redhat.devtools.lsp4ij.LanguageServerFactory
 import com.redhat.devtools.lsp4ij.client.LanguageClientImpl
+import com.redhat.devtools.lsp4ij.client.features.LSPClientFeatures
 import com.redhat.devtools.lsp4ij.server.StreamConnectionProvider
 import org.eclipse.lsp4j.services.LanguageServer
 
@@ -12,6 +13,8 @@ class DamlLspServerFactory : LanguageServerFactory {
 
     override fun createLanguageClient(project: Project): LanguageClientImpl =
         DamlLanguageClient(project)
+
+    override fun createClientFeatures(): LSPClientFeatures = DamlClientFeatures()
 
     override fun getServerInterface(): Class<out LanguageServer> = DamlServerInterface::class.java
 }

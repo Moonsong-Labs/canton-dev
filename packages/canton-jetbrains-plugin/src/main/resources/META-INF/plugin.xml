@@ -29,20 +29,29 @@
         </ul>
     ]]></change-notes>
 
-    <depends>com.intellij.modules.platform</depends>
-    <depends>com.intellij.modules.json</depends>
-    <depends>com.redhat.devtools.lsp4ij</depends>
+	    <depends>com.intellij.modules.platform</depends>
+	    <depends>com.intellij.modules.json</depends>
+	    <depends>org.jetbrains.plugins.yaml</depends>
+	    <depends>com.redhat.devtools.lsp4ij</depends>
     <depends optional="true" config-file="daml-textmate.xml">org.jetbrains.plugins.textmate</depends>
 
     <resource-bundle>messages.DamlBundle</resource-bundle>
 
     <extensions defaultExtensionNs="com.intellij">
-        <fileType
-            name="DAML"
+	        <fileType
+	            name="DAML"
             language="DAML"
             extensions="daml"
             implementationClass="com.moonsonglabs.daml.DamlFileType"
-            fieldName="INSTANCE"/>
+	            fieldName="INSTANCE"/>
+
+	        <fileType
+	            name="Canton"
+	            language="Canton"
+	            extensions="conf;canton"
+	            patterns="*.canton.sc"
+	            implementationClass="com.moonsonglabs.daml.canton.CantonFileType"
+	            fieldName="INSTANCE"/>
 
         <lang.commenter language="DAML"
                         implementationClass="com.moonsonglabs.daml.DamlCommenter"/>
@@ -50,8 +59,11 @@
         <lang.parserDefinition language="DAML"
                                implementationClass="com.moonsonglabs.daml.DamlParserDefinition"/>
 
-        <lang.syntaxHighlighterFactory language="DAML"
-                                       implementationClass="com.moonsonglabs.daml.syntax.DamlSyntaxHighlighterFactory"/>
+	        <lang.syntaxHighlighterFactory language="DAML"
+	                                       implementationClass="com.moonsonglabs.daml.syntax.DamlSyntaxHighlighterFactory"/>
+
+	        <lang.syntaxHighlighterFactory language="Canton"
+	                                       implementationClass="com.moonsonglabs.daml.canton.CantonSyntaxHighlighterFactory"/>
 
         <lang.foldingBuilder language="DAML"
                              implementationClass="com.redhat.devtools.lsp4ij.features.foldingRange.LSPFoldingRangeBuilder"
@@ -67,8 +79,7 @@
                              implementation="com.moonsonglabs.daml.snippets.DamlTemplateContextType"/>
         <defaultLiveTemplates file="/snippets/daml-snippets"/>
 
-        <projectService serviceImplementation="com.moonsonglabs.daml.settings.DamlProjectSettings"/>
-        <projectConfigurable
+	        <projectConfigurable
             parentId="language"
             instance="com.moonsonglabs.daml.settings.DamlSettingsConfigurable"
             id="com.moonsonglabs.daml.settings"
@@ -80,13 +91,19 @@
                     factoryClass="com.moonsonglabs.daml.scriptresults.ScriptResultsToolWindowFactory"
                     icon="com.moonsonglabs.daml.DamlIcons.ToolWindow"/>
 
-        <notificationGroup id="DAML" displayType="BALLOON"/>
+	        <notificationGroup id="DAML" displayType="BALLOON"/>
 
-        <json.jsonSchemaProviderFactory
-            implementation="com.moonsonglabs.daml.schemas.DamlYamlSchemaProviderFactory"/>
+	        <postStartupActivity implementation="com.moonsonglabs.daml.DamlStartupActivity"/>
 
-        <postStartupActivity implementation="com.moonsonglabs.daml.DamlStartupActivity"/>
-    </extensions>
+	        <configurationType implementation="com.moonsonglabs.daml.run.DamlRunConfigurationType"/>
+	        <configurationType implementation="com.moonsonglabs.daml.run.CantonRunConfigurationType"/>
+	        <runConfigurationProducer implementation="com.moonsonglabs.daml.run.DamlRunConfigurationProducer"/>
+	        <runConfigurationProducer implementation="com.moonsonglabs.daml.run.CantonRunConfigurationProducer"/>
+	    </extensions>
+
+	    <extensions defaultExtensionNs="JavaScript.JsonSchema">
+	        <ProviderFactory implementation="com.moonsonglabs.daml.schemas.DamlYamlSchemaProviderFactory"/>
+	    </extensions>
 
     <extensions defaultExtensionNs="com.redhat.devtools.lsp4ij">
         <server id="daml"
@@ -106,9 +123,63 @@
             <keyboard-shortcut keymap="$default" first-keystroke="meta F1"/>
             <keyboard-shortcut keymap="$default" first-keystroke="ctrl F1"/>
         </action>
-        <action id="DAML.RestartServer"
-                class="com.moonsonglabs.daml.actions.RestartServerAction"
-                text="Restart DAML Language Server"
-                description="Stop and restart the DAML LSP for the current project"/>
-    </actions>
-</idea-plugin>
+	        <action id="DAML.RestartServer"
+	                class="com.moonsonglabs.daml.actions.RestartServerAction"
+	                text="Restart DAML Language Server"
+	                description="Stop and restart the DAML LSP for the current project">
+	            <add-to-group group-id="ToolsMenu" anchor="last"/>
+	        </action>
+	        <action id="DAML.PrepareDevcontainer"
+	                class="com.moonsonglabs.daml.actions.PrepareDevcontainerAction"
+	                text="Prepare Canton/DAML Devcontainer"
+	                description="Create or update the bundled Canton/DAML devcontainer files">
+	            <add-to-group group-id="ToolsMenu" anchor="last"/>
+	        </action>
+	        <action id="DAML.ValidateRuntime"
+	                class="com.moonsonglabs.daml.actions.ValidateRuntimeAction"
+	                text="Validate Canton/DAML Runtime"
+	                description="Check whether DAML, DPM, Canton, Java, and Node are available in the active backend">
+	            <add-to-group group-id="ToolsMenu" anchor="last"/>
+	        </action>
+	        <action id="daml.showResource"
+	                class="com.moonsonglabs.daml.actions.ShowScriptResourceAction"
+	                text="Show DAML Script Results"
+	                description="Open DAML script results pushed by the language server"/>
+	        <action id="DAML.RunBuild"
+	                class="com.moonsonglabs.daml.actions.RunDamlBuildAction"
+	                text="Run DAML Build"
+	                description="Run daml build in the current DAML workspace">
+	            <add-to-group group-id="ToolsMenu" anchor="last"/>
+	        </action>
+	        <action id="DAML.RunTest"
+	                class="com.moonsonglabs.daml.actions.RunDamlTestAction"
+	                text="Run DAML Test"
+	                description="Run daml test in the current DAML workspace">
+	            <add-to-group group-id="ToolsMenu" anchor="last"/>
+	        </action>
+	        <action id="DAML.RunScript"
+	                class="com.moonsonglabs.daml.actions.RunDamlScriptAction"
+	                text="Run DAML Script"
+	                description="Run daml script for the current DAML file or script declaration">
+	            <add-to-group group-id="ToolsMenu" anchor="last"/>
+	        </action>
+	        <action id="DAML.RunStart"
+	                class="com.moonsonglabs.daml.actions.RunDamlStartAction"
+	                text="Run DAML Start"
+	                description="Run daml start in the current DAML workspace">
+	            <add-to-group group-id="ToolsMenu" anchor="last"/>
+	        </action>
+	        <action id="Canton.RunConfig"
+	                class="com.moonsonglabs.daml.actions.RunCantonConfigAction"
+	                text="Run Canton Config"
+	                description="Run canton with the current config file">
+	            <add-to-group group-id="ToolsMenu" anchor="last"/>
+	        </action>
+	        <action id="Canton.RunScript"
+	                class="com.moonsonglabs.daml.actions.RunCantonScriptAction"
+	                text="Run Canton Script"
+	                description="Run canton with the current console/bootstrap script">
+	            <add-to-group group-id="ToolsMenu" anchor="last"/>
+	        </action>
+	    </actions>
+	</idea-plugin>
