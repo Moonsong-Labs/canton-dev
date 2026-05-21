@@ -26,13 +26,14 @@ import java.util.Base64
 import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.SwingConstants
+import javax.swing.UIManager
 
 /**
  * The Script Results panel.
  *
  * Renders server-pushed HTML in a JCEF browser, exposing the same host/webview bridge that
  * VSCode's webview uses (`set_show_archived`, `set_show_detailed_disclosure`,
- * `set_selected_view`, plus host→guest `set_view`/`add_note`) and adapting VSCode's
+ * `set_selected_view`, plus host-to-guest `set_view`/`add_note`) and adapting VSCode's
  * `command:daml.revealLocation` source links for JetBrains.
  *
  * If JCEF is unavailable on this IDE (e.g. on Linux without the JCEF runtime), falls back
@@ -43,6 +44,10 @@ class ScriptResultsPanel(private val project: Project) : JPanel(BorderLayout()),
     private val browser: JBCefBrowser?
     private val jsQuery: JBCefJSQuery?
     private val gson = Gson()
+    private var webviewReady = false
+    private var latestHtml: String? = null
+    private var latestProgress: Long? = null
+    private val pendingNotes = mutableListOf<String>()
     private var titleLabel = JLabel("DAML Script Results", SwingConstants.LEFT).apply {
         border = javax.swing.BorderFactory.createEmptyBorder(4, 8, 4, 8)
     }
@@ -51,7 +56,7 @@ class ScriptResultsPanel(private val project: Project) : JPanel(BorderLayout()),
         if (!JBCefApp.isSupported()) {
             browser = null
             jsQuery = null
-            background = Color.WHITE
+            background = UIManager.getColor("Panel.background") ?: Color.WHITE
             add(JLabel(DamlBundle.message("daml.notification.jcef.unavailable"),
                 SwingConstants.CENTER), BorderLayout.CENTER)
         } else {
@@ -67,7 +72,9 @@ class ScriptResultsPanel(private val project: Project) : JPanel(BorderLayout()),
             b.jbCefClient.addLoadHandler(object : CefLoadHandlerAdapter() {
                 override fun onLoadEnd(cefBrowser: CefBrowser?, frame: org.cef.browser.CefFrame?, httpStatusCode: Int) {
                     installBridge(cefBrowser)
+                    webviewReady = true
                     sendInitialView()
+                    flushPendingMessages()
                 }
             }, b.cefBrowser)
             add(titleLabel, BorderLayout.NORTH)
@@ -86,14 +93,23 @@ class ScriptResultsPanel(private val project: Project) : JPanel(BorderLayout()),
 
     fun setHtml(html: String) {
         if (browser == null) return
-        val js = "if (window.setHtmlContent) setHtmlContent(${gson.toJson(html)});"
-        browser.cefBrowser.executeJavaScript(js, browser.cefBrowser.url, 0)
+        latestHtml = html
+        if (webviewReady) dispatchHtml(html)
     }
 
     fun setNote(html: String) {
         if (browser == null) return
-        val msg = mapOf("command" to "add_note", "value" to html)
-        postToWebview(msg)
+        if (webviewReady) {
+            dispatchNote(html)
+        } else {
+            pendingNotes.add(html)
+        }
+    }
+
+    fun setProgress(millisecondsPassed: Long) {
+        if (browser == null) return
+        latestProgress = millisecondsPassed
+        if (webviewReady) dispatchProgress(millisecondsPassed)
     }
 
     private fun loadInitialHtml() {
@@ -108,6 +124,7 @@ class ScriptResultsPanel(private val project: Project) : JPanel(BorderLayout()),
         val html = String(htmlBytes, StandardCharsets.UTF_8)
             .replace("\$webviewSrc", jsDataUrl)
             .replace("\$webviewCss", cssDataUrl)
+            .replace("\$webviewTheme", webviewThemeClass())
         browser?.loadHTML(html)
     }
 
@@ -128,10 +145,40 @@ class ScriptResultsPanel(private val project: Project) : JPanel(BorderLayout()),
             "value" to mapOf(
                 "selected" to s.selectedView,
                 "showArchived" to s.showArchived,
-                "showDetailedDisclosure" to s.showDetailedDisclosure
+                "showDetailedDisclosure" to s.showDetailedDisclosure,
+                "theme" to webviewThemeClass()
             )
         )
         postToWebview(msg)
+    }
+
+    private fun flushPendingMessages() {
+        latestHtml?.let(::dispatchHtml)
+        pendingNotes.forEach(::dispatchNote)
+        pendingNotes.clear()
+        latestProgress?.let(::dispatchProgress)
+    }
+
+    private fun dispatchHtml(html: String) {
+        val b = browser ?: return
+        val js = "if (window.setHtmlContent) setHtmlContent(${gson.toJson(html)});"
+        b.cefBrowser.executeJavaScript(js, b.cefBrowser.url, 0)
+    }
+
+    private fun dispatchNote(html: String) {
+        val msg = mapOf("command" to "add_note", "value" to html)
+        postToWebview(msg)
+    }
+
+    private fun dispatchProgress(millisecondsPassed: Long) {
+        val msg = mapOf("command" to "set_progress", "value" to millisecondsPassed)
+        postToWebview(msg)
+    }
+
+    private fun webviewThemeClass(): String {
+        val color = UIManager.getColor("Panel.background") ?: background ?: Color.WHITE
+        val luminance = 0.2126 * color.red + 0.7152 * color.green + 0.0722 * color.blue
+        return if (luminance < 128) "ide-dark" else "ide-light"
     }
 
     private fun postToWebview(msg: Map<String, Any?>) {
@@ -149,7 +196,7 @@ class ScriptResultsPanel(private val project: Project) : JPanel(BorderLayout()),
             when (map["command"] as? String) {
                 "set_show_archived" -> s.showArchived = (map["value"] as? Boolean) ?: false
                 "set_show_detailed_disclosure" -> s.showDetailedDisclosure = (map["value"] as? Boolean) ?: false
-                "set_selected_view" -> s.selectedView = (map["value"] as? String) ?: "table"
+                "set_selected_view" -> s.selectedView = (map["value"] as? String) ?: "overview"
                 "reveal_location" -> revealLocation(map["value"] as? String)
                 else -> thisLogger().debug("Unhandled host message: $raw")
             }

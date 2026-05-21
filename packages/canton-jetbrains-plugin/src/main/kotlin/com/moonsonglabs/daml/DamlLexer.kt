@@ -13,8 +13,8 @@ import com.intellij.psi.tree.IElementType
  *
  * Recognizes: line comments (-- ...), block comments ({- ... -} with nesting), pragmas
  * ({-# ... #-}), doc comments (-- | ... and {-| ... -}), string literals, char literals,
- * numeric literals, keywords (Haskell + DAML), uppercase identifiers as types, operators,
- * brackets, and whitespace.
+ * numeric literals, keyword groups, booleans, Prelude types/constructors, uppercase
+ * identifiers as types, common DAML operators, brackets, and whitespace.
  */
 class DamlLexer : LexerBase() {
 
@@ -54,6 +54,8 @@ class DamlLexer : LexerBase() {
             c == '"' -> consumeStringLiteral()
             c == '\'' -> consumeCharLiteral()
             c.isDigit() -> consumeNumber()
+            c == '(' && peek(1) == ')' -> { pos += 2; tokenType = DamlTokenTypes.UNIT_LITERAL }
+            c == '[' && peek(1) == ']' -> { pos += 2; tokenType = DamlTokenTypes.EMPTY_LIST_LITERAL }
             c == '(' -> { pos++; tokenType = DamlTokenTypes.LPAREN }
             c == ')' -> { pos++; tokenType = DamlTokenTypes.RPAREN }
             c == '{' -> { pos++; tokenType = DamlTokenTypes.LBRACE }
@@ -169,9 +171,17 @@ class DamlLexer : LexerBase() {
         while (pos < endOffset && isIdCont(buffer[pos])) pos++
         val text = buffer.subSequence(tokenStart, pos).toString()
         tokenType = when {
+            text in DamlKeywords.booleanLiterals -> DamlTokenTypes.BOOLEAN_LITERAL
             text in DamlKeywords.controlKeywords -> DamlTokenTypes.CONTROL_KEYWORD
-            text in DamlKeywords.damlKeywords -> DamlTokenTypes.DAML_KEYWORD
-            text in DamlKeywords.haskellKeywords -> DamlTokenTypes.KEYWORD
+            text in DamlKeywords.choiceModifierKeywords -> DamlTokenTypes.CHOICE_MODIFIER_KEYWORD
+            text in DamlKeywords.moduleKeywords -> DamlTokenTypes.MODULE_KEYWORD
+            text in DamlKeywords.importKeywords -> DamlTokenTypes.IMPORT_KEYWORD
+            text in DamlKeywords.contractClauseKeywords -> DamlTokenTypes.DAML_KEYWORD
+            text in DamlKeywords.declarationKeywords -> DamlTokenTypes.DECLARATION_KEYWORD
+            text in DamlKeywords.haskellKeywords || text in DamlKeywords.damlKeywords -> DamlTokenTypes.KEYWORD
+            text in DamlKeywords.predefinedConstructors -> DamlTokenTypes.PREDEFINED_IDENTIFIER
+            text in DamlKeywords.preludeTypes -> DamlTokenTypes.PRELUDE_TYPE
+            text in DamlKeywords.builtins -> DamlTokenTypes.BUILTIN_IDENTIFIER
             firstChar.isUpperCase() -> DamlTokenTypes.TYPE_NAME
             else -> DamlTokenTypes.IDENTIFIER
         }
@@ -179,7 +189,18 @@ class DamlLexer : LexerBase() {
 
     private fun consumeOperator() {
         while (pos < endOffset && isOpChar(buffer[pos])) pos++
-        tokenType = DamlTokenTypes.OPERATOR
+        val text = buffer.subSequence(tokenStart, pos).toString()
+        tokenType = when (text) {
+            "." -> DamlTokenTypes.DOT
+            ":" -> DamlTokenTypes.COLON
+            "::" -> DamlTokenTypes.DOUBLE_COLON
+            "->", "\u2192" -> DamlTokenTypes.ARROW
+            "=>", "\u21d2" -> DamlTokenTypes.BIG_ARROW
+            "<-" -> DamlTokenTypes.BIND_ARROW
+            "=" -> DamlTokenTypes.EQUALS
+            "==", "/=" -> DamlTokenTypes.EQUALITY_OPERATOR
+            else -> DamlTokenTypes.OPERATOR
+        }
     }
 
     private fun isIdStart(c: Char): Boolean = c.isLetter() || c == '_'
@@ -192,7 +213,8 @@ class DamlLexer : LexerBase() {
     }
 
     private fun isOpChar(c: Char): Boolean = when (c) {
-        '!', '#', '$', '%', '&', '*', '+', '.', '/', '<', '=', '>', '?', '@', '\\', '^', '|', '-', '~', ':' -> true
+        '!', '#', '$', '%', '&', '*', '+', '.', '/', '<', '=', '>', '?', '@', '\\', '^', '|', '-', '~', ':',
+        '\u2192', '\u21d2' -> true
         else -> false
     }
 }

@@ -22,6 +22,13 @@
     ]]></description>
 
     <change-notes><![CDATA[
+        <h3>0.2.0</h3>
+        <ul>
+          <li>Redesigned DAML Script Results as an explorer with Overview, Contracts, Tx Tree, Disclosure, Console, and Raw views.</li>
+          <li>Improved DAML highlighting with configurable color settings, richer lexer tokens, and local DAML-aware annotations.</li>
+          <li>Added better local SDK/DPM configuration, terminal PATH integration, and clearer runtime validation.</li>
+          <li>Improved DAML navigation for module imports and explicit imported symbols.</li>
+        </ul>
         <h3>0.1.0</h3>
         <ul>
           <li>Initial release: file type registration, LSP4IJ wiring around <code>damlc ide</code>, Script Results panel,
@@ -63,6 +70,9 @@
 	        <lang.syntaxHighlighterFactory language="DAML"
 	                                       implementationClass="com.moonsonglabs.daml.syntax.DamlSyntaxHighlighterFactory"/>
 
+	        <annotator language="DAML"
+	                   implementationClass="com.moonsonglabs.daml.syntax.DamlHighlightingAnnotator"/>
+
 	        <lang.syntaxHighlighterFactory language="Canton"
 	                                       implementationClass="com.moonsonglabs.daml.canton.CantonSyntaxHighlighterFactory"/>
 
@@ -94,6 +104,8 @@
             id="com.moonsonglabs.daml.settings"
             displayName="DAML"
             nonDefaultProject="false"/>
+
+	        <colorSettingsPage implementation="com.moonsonglabs.daml.syntax.DamlColorSettingsPage"/>
 
         <toolWindow id="DAML Script Results"
                     anchor="bottom"

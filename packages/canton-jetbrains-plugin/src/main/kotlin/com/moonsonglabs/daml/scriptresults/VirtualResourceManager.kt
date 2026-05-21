@@ -25,32 +25,43 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * Why only one panel in v1: VSCode opens one webview panel per resource, but a single
  * JetBrains tool window keeps the beta simple and avoids tab lifecycle surprises. We close
- * the previously active virtual resource when a new one is shown; per-resource tabs are
- * deferred to v2.
+ * the previously active virtual resource when a new one is shown.
  */
 @Service(Service.Level.PROJECT)
 class VirtualResourceManager(private val project: Project) : Disposable {
 
-    private data class Resource(var html: String = "", var note: String = "", var progressMs: Long = -1)
+    private data class Resource(var html: String = "", var notes: List<String> = emptyList(), var progressMs: Long = -1)
 
     private val resources = ConcurrentHashMap<String, Resource>()
     @Volatile private var activeUri: String? = null
 
     fun update(uri: String, html: String) {
-        resources.computeIfAbsent(uri) { Resource() }.html = html
+        resources.computeIfAbsent(uri) { Resource() }.apply {
+            this.html = html
+            progressMs = -1
+        }
         applyOnEdt(uri) { panel ->
             panel.setTitle(titleFor(uri))
+            panel.setProgress(-1)
             panel.setHtml(html)
         }
     }
 
     fun updateProgress(uri: String, ms: Long) {
-        resources.computeIfAbsent(uri) { Resource() }.progressMs = ms
-        // Progress is informational; v2 will surface in tool-window status.
+        resources.computeIfAbsent(uri) { Resource() }.apply {
+            progressMs = ms
+            if (ms <= 0) notes = emptyList()
+        }
+        applyOnEdt(uri) { panel ->
+            panel.setTitle(titleFor(uri))
+            panel.setProgress(ms)
+        }
     }
 
     fun note(uri: String, html: String) {
-        resources.computeIfAbsent(uri) { Resource() }.note = html
+        resources.compute(uri) { _, existing ->
+            (existing ?: Resource()).apply { notes = notes + html }
+        }
         applyOnEdt(uri) { it.setNote(html) }
     }
 
@@ -69,7 +80,8 @@ class VirtualResourceManager(private val project: Project) : Disposable {
             panel.setTitle(title)
             resources[uri]?.let {
                 if (it.html.isNotEmpty()) panel.setHtml(it.html)
-                if (it.note.isNotEmpty()) panel.setNote(it.note)
+                it.notes.forEach(panel::setNote)
+                panel.setProgress(it.progressMs)
             }
         }
     }
@@ -151,7 +163,7 @@ class VirtualResourceManager(private val project: Project) : Disposable {
         val decl = params["top-level-decl"]
         val file = params["file"]?.substringAfterLast('/')
         return when {
-            decl != null && file != null -> "$decl  ·  $file"
+            decl != null && file != null -> "$decl - $file"
             decl != null -> decl
             file != null -> file
             else -> "DAML Script Results"
