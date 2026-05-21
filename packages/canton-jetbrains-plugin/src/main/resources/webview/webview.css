@@ -399,6 +399,20 @@ body.empty .empty-message {
   padding: 10px;
 }
 
+/* Tx Tree: let the Transactions panel be dragged wider/narrower. The first grid
+   track is `auto` so it follows the pane's resized width. */
+.split-view.tx-view {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.tx-view .master-pane {
+  width: 34%;
+  min-width: 240px;
+  max-width: 70%;
+  overflow: auto;
+  resize: horizontal;
+}
+
 .pane-title {
   display: flex;
   align-items: center;
@@ -680,6 +694,25 @@ body.empty .empty-message {
   color: var(--daml-fg-muted);
 }
 
+.event-badge.exercise {
+  color: var(--daml-accent);
+  background: var(--daml-accent-soft);
+  border-color: color-mix(in srgb, var(--daml-accent) 40%, var(--daml-border));
+}
+
+.event-badge.fetch,
+.event-badge.lookup {
+  color: var(--daml-party-1);
+  background: color-mix(in srgb, var(--daml-bg-panel) 72%, var(--daml-party-1));
+  border-color: color-mix(in srgb, var(--daml-party-1) 38%, var(--daml-border));
+}
+
+.event-badge.archive {
+  color: var(--daml-warning);
+  background: var(--daml-warning-soft);
+  border-color: color-mix(in srgb, var(--daml-warning) 40%, var(--daml-border));
+}
+
 .role-chip {
   gap: 6px;
   border-radius: 7px;
@@ -790,7 +823,7 @@ body.empty .empty-message {
 
 .tx-node summary {
   display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  grid-template-columns: auto auto auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   min-height: 38px;
@@ -806,10 +839,43 @@ body.empty .empty-message {
   content: "";
 }
 
+.tx-toggle {
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  place-items: center;
+  border-radius: 5px;
+  color: var(--daml-fg-muted);
+  background: var(--daml-bg-elevated);
+  border-color: var(--daml-border);
+  font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 1;
+}
+
+.tx-toggle:hover {
+  color: var(--daml-accent);
+  border-color: color-mix(in srgb, var(--daml-accent) 40%, var(--daml-border));
+  background: var(--daml-bg-hover);
+}
+
+.tx-node[open] > summary .tx-toggle:before {
+  content: "-";
+}
+
+.tx-node:not([open]) > summary .tx-toggle:before {
+  content: "+";
+}
+
 .tx-step {
   display: inline-grid;
-  width: 24px;
+  min-width: 24px;
   height: 24px;
+  padding: 0 6px;
   place-items: center;
   border-radius: 999px;
   color: var(--daml-accent);
@@ -822,6 +888,9 @@ body.empty .empty-message {
 }
 
 .tx-event-title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -829,11 +898,78 @@ body.empty .empty-message {
   font-weight: 700;
 }
 
+.tx-party,
+.tx-keyword,
+.tx-choice,
+.tx-template,
+.tx-muted-token {
+  min-width: 0;
+}
+
+.tx-party {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.tx-keyword {
+  color: var(--daml-warning);
+  font-weight: 800;
+}
+
+.tx-keyword-create {
+  color: var(--daml-success);
+}
+
+.tx-keyword-exercise {
+  color: var(--daml-accent);
+}
+
+.tx-keyword-fetch,
+.tx-keyword-lookup {
+  color: var(--daml-party-1);
+}
+
+.tx-keyword-archive,
+.tx-keyword-archived-result {
+  color: var(--daml-warning);
+}
+
+.tx-choice {
+  color: var(--daml-party-2);
+  font-weight: 800;
+}
+
+.tx-template {
+  color: var(--daml-fg);
+  font-weight: 750;
+}
+
+.tx-muted-token {
+  color: var(--daml-fg-muted);
+  font-weight: 650;
+}
+
 .tx-node-body {
   display: grid;
   gap: 8px;
   padding: 0 10px 10px 44px;
   border-top: 1px solid var(--daml-border);
+}
+
+.tx-children {
+  display: grid;
+  gap: 8px;
+  margin-top: 2px;
+  padding-left: 14px;
+  border-left: 2px solid var(--daml-border);
+}
+
+.tx-children .tx-node {
+  box-shadow: none;
 }
 
 .compact-field-grid {
@@ -1133,6 +1269,12 @@ body.hidden_disclosure .raw-rendered td.disclosed.disclosure:after {
 
   .split-view {
     min-height: auto;
+  }
+
+  .tx-view .master-pane {
+    width: auto;
+    max-width: none;
+    resize: none;
   }
 
   .master-pane,

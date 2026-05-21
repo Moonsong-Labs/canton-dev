@@ -46,6 +46,7 @@ class DamlColorSettingsPage : ColorSettingsPage {
             AttributesDescriptor("Names//Script declaration", DamlSyntaxHighlighter.SCRIPT_DECLARATION),
             AttributesDescriptor("Names//Built-in", DamlSyntaxHighlighter.BUILTIN),
             AttributesDescriptor("Names//Party", DamlSyntaxHighlighter.PARTY_NAME),
+            AttributesDescriptor("Names//Constructor", DamlSyntaxHighlighter.CONSTRUCTOR),
             AttributesDescriptor("Literals//String", DamlSyntaxHighlighter.STRING),
             AttributesDescriptor("Literals//Number", DamlSyntaxHighlighter.NUMBER),
             AttributesDescriptor("Literals//Boolean", DamlSyntaxHighlighter.BOOLEAN),
@@ -71,6 +72,7 @@ class DamlColorSettingsPage : ColorSettingsPage {
             "scriptName" to DamlSyntaxHighlighter.SCRIPT_DECLARATION,
             "builtin" to DamlSyntaxHighlighter.BUILTIN,
             "party" to DamlSyntaxHighlighter.PARTY_NAME,
+            "constructor" to DamlSyntaxHighlighter.CONSTRUCTOR,
             "predefined" to DamlSyntaxHighlighter.PREDEFINED_VALUE
         )
 
@@ -104,13 +106,13 @@ template <decl>Deposit</decl>
       controller <field>operator</field>
       do
         <builtin>assert</builtin> (amount > 0.0)
-        <builtin>pure</builtin> (<predefined>Some</predefined> <predefined>()</predefined>)
+        <builtin>pure</builtin> (<constructor>Some</constructor> <predefined>()</predefined>)
 
 <scriptName>setup</scriptName> : <preludeType>Script</preludeType> ()
 <scriptName>setup</scriptName> = script do
   <party>alice</party> <- <builtin>allocateParty</builtin> "Alice"
   <builtin>debug</builtin> "[Test] OK"
-  _ <- <builtin>createUser</builtin> (<preludeType>User</preludeType> userId (<predefined>Some</predefined> <party>alice</party>)) [<predefined>CanActAs</predefined> <party>alice</party>]
+  _ <- <builtin>createUser</builtin> (<preludeType>User</preludeType> userId (<constructor>Some</constructor> <party>alice</party>)) [<constructor>CanActAs</constructor> <party>alice</party>]
   let due = <builtin>time</builtin> (<builtin>date</builtin> 2026 Jan 1) 10 00 00
   _ <- <builtin>submit</builtin> <party>alice</party> do
     <builtin>createCmd</builtin> Deposit with operator = alice; processor = processor

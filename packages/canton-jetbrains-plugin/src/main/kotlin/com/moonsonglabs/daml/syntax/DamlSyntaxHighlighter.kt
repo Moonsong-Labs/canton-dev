@@ -28,7 +28,7 @@ class DamlSyntaxHighlighter : SyntaxHighlighterBase() {
         DamlTokenTypes.PRELUDE_TYPE -> arrayOf(PRELUDE_TYPE)
         DamlTokenTypes.IDENTIFIER -> arrayOf(IDENTIFIER)
         DamlTokenTypes.BUILTIN_IDENTIFIER -> arrayOf(BUILTIN)
-        DamlTokenTypes.PREDEFINED_IDENTIFIER -> arrayOf(PREDEFINED_VALUE)
+        DamlTokenTypes.PREDEFINED_IDENTIFIER -> arrayOf(CONSTRUCTOR)
         DamlTokenTypes.STRING_LITERAL -> arrayOf(STRING)
         DamlTokenTypes.CHAR_LITERAL -> arrayOf(STRING)
         DamlTokenTypes.NUMBER -> arrayOf(NUMBER)
@@ -73,9 +73,9 @@ class DamlSyntaxHighlighter : SyntaxHighlighterBase() {
         val CONTROL_KEYWORD = TextAttributesKey.createTextAttributesKey(
             "DAML_CONTROL_KEYWORD", DefaultLanguageHighlighterColors.KEYWORD)
         val TYPE_NAME = TextAttributesKey.createTextAttributesKey(
-            "DAML_TYPE_NAME", DefaultLanguageHighlighterColors.CLASS_REFERENCE)
+            "DAML_TYPE_NAME", DefaultLanguageHighlighterColors.CLASS_NAME)
         val PRELUDE_TYPE = TextAttributesKey.createTextAttributesKey(
-            "DAML_PRELUDE_TYPE", DefaultLanguageHighlighterColors.CLASS_REFERENCE)
+            "DAML_PRELUDE_TYPE", DefaultLanguageHighlighterColors.CLASS_NAME)
         val IDENTIFIER = TextAttributesKey.createTextAttributesKey(
             "DAML_IDENTIFIER", DefaultLanguageHighlighterColors.IDENTIFIER)
         val MODULE_NAME = TextAttributesKey.createTextAttributesKey(
@@ -96,6 +96,8 @@ class DamlSyntaxHighlighter : SyntaxHighlighterBase() {
             "DAML_BUILTIN", DefaultLanguageHighlighterColors.KEYWORD)
         val PARTY_NAME = TextAttributesKey.createTextAttributesKey(
             "DAML_PARTY_NAME", DefaultLanguageHighlighterColors.CONSTANT)
+        val CONSTRUCTOR = TextAttributesKey.createTextAttributesKey(
+            "DAML_CONSTRUCTOR", DefaultLanguageHighlighterColors.STATIC_FIELD)
         val PREDEFINED_VALUE = TextAttributesKey.createTextAttributesKey(
             "DAML_PREDEFINED_VALUE", DefaultLanguageHighlighterColors.PREDEFINED_SYMBOL)
         val STRING = TextAttributesKey.createTextAttributesKey(

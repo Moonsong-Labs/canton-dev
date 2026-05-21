@@ -202,7 +202,7 @@ function buildModelFromFragment(fragment) {
   const consoleEntries = extractConsoleEntries(root);
   const parties = Array.from(new Set(contracts.flatMap(contract => contract.parties.map(p => p.name)))).sort();
   const templates = Array.from(new Set(contracts.map(contract => contract.template))).sort();
-  const rawTransaction = root.querySelector('.transaction');
+  const rawTransaction = transactionSections(root)[0];
 
   if (contracts.length === 0 && root.textContent.trim()) {
     warnings.push('Explorer could not confidently extract contracts from this result. Raw remains available.');
@@ -280,10 +280,15 @@ function contractFromHeadingAndTable(heading, table, index) {
     const isDisclosure = cell && (cell.classList.contains('disclosure') || cell.classList.contains('disclosed'));
     const headerIsParty = isDisclosureHeader(header, headerCells[i]);
     if (isDisclosure || headerIsParty) {
+      // The disclosure cell renders a one-letter glyph plus a tooltip word
+      // (e.g. <span>D</span><span class="tooltiptext">Divulged</span>); textContent
+      // concatenates them ("DDivulged"). Prefer the tooltip word alone.
+      const tip = cell && cell.querySelector ? cell.querySelector('.tooltiptext') : null;
+      const detailText = cleanText(tip ? tip.textContent : values[i]);
       disclosures.push({
         party: header || ('party-' + (disclosures.length + 1)),
         visible: isDisclosureVisible(cell, values[i]),
-        detail: cleanText(values[i]) || (isDisclosureVisible(cell, values[i]) ? 'visible' : '')
+        detail: detailText || (isDisclosureVisible(cell, values[i]) ? 'visible' : '')
       });
     } else if (header) {
       fields.push({ name: header, value: values[i] || '' });
@@ -341,33 +346,404 @@ function addParty(map, name, roles) {
 }
 
 function parseTransactions(root, contracts) {
-  const txMap = new Map();
-  for (const contract of contracts) {
-    const id = contract.transactionId || 'unknown';
-    if (!txMap.has(id)) txMap.set(id, { id, label: id === 'unknown' ? 'Unknown transaction' : 'Transaction #' + id, events: [] });
-    txMap.get(id).events.push({
-      id: contract.id,
-      kind: contract.archived ? 'Archived/Result' : 'Create',
-      label: contract.templateShort,
-      contractId: contract.id,
-      template: contract.template,
-      parties: contract.parties,
-      fields: contract.fields
-    });
-  }
+  const contractsById = new Map(contracts.map(contract => [contract.id, contract]));
+  const txMap = transactionMapFromContracts(contracts);
 
-  const transactionSections = Array.from(root.querySelectorAll('.transaction'));
-  transactionSections.forEach((section, index) => {
-    const id = String(index + 1);
+  transactionSections(root).forEach((section, index) => {
+    const damlTransactions = transactionsFromDamlTransactionCode(section, contractsById);
+    if (damlTransactions.length) {
+      for (const tx of damlTransactions) mergeTransactionIntoMap(txMap, Object.assign({}, tx, { rawHtml: section.outerHTML }));
+      return;
+    }
+
+    const id = transactionIdFromText(section.textContent) || String(index + 1);
     if (!txMap.has(id)) txMap.set(id, { id, label: 'Transaction #' + id, events: [] });
-    txMap.get(id).rawHtml = section.outerHTML;
-    const text = cleanText(section.textContent);
-    if (txMap.get(id).events.length === 0 && text) {
-      txMap.get(id).events.push({ id: 'tx-' + id + '-raw', kind: 'Raw', label: text.slice(0, 80), rawText: text });
+    const tx = txMap.get(id);
+    tx.rawHtml = section.outerHTML;
+    tx.rawText = cleanText(textWithBreaks(section));
+
+    const parsedEvents = transactionEventsFromElement(section, id, contractsById);
+    if (parsedEvents.length) {
+      tx.events = mergeTransactionEvents(parsedEvents, tx.events);
+    } else if (tx.events.length === 0 && tx.rawText) {
+      tx.events.push(rawTransactionEvent(id, tx.rawText));
     }
   });
 
   return Array.from(txMap.values()).sort((a, b) => transactionSortKey(a.id) - transactionSortKey(b.id));
+}
+
+function mergeTransactionIntoMap(map, tx) {
+  const existing = map.get(tx.id);
+  if (!existing) {
+    map.set(tx.id, Object.assign({}, tx, { events: (tx.events || []).slice() }));
+    return;
+  }
+  existing.label = tx.label || existing.label;
+  existing.rawHtml = tx.rawHtml || existing.rawHtml;
+  existing.rawText = tx.rawText || existing.rawText;
+  existing.events = mergeTransactionEvents(tx.events || [], existing.events || []);
+}
+
+function transactionSections(root) {
+  const selector = [
+    '.transaction',
+    '.transaction-tree',
+    '.tx-tree',
+    '[data-transaction]',
+    '[data-transaction-tree]',
+    '[data-tx-tree]'
+  ].join(',');
+  const sections = Array.from(root.querySelectorAll(selector));
+  return sections.filter(section => !sections.some(other => other !== section && other.contains(section)));
+}
+
+function transactionMapFromContracts(contracts) {
+  const txMap = new Map();
+  for (const contract of contracts) {
+    const id = contract.transactionId || 'unknown';
+    if (!txMap.has(id)) txMap.set(id, { id, label: id === 'unknown' ? 'Unknown transaction' : 'Transaction #' + id, events: [] });
+    txMap.get(id).events.push(transactionEventFromContract(contract));
+  }
+  return txMap;
+}
+
+function transactionEventFromContract(contract) {
+  return {
+    id: 'contract-' + contract.id,
+    kind: contract.archived ? 'Archived/Result' : 'Create',
+    label: contract.templateShort,
+    contractId: contract.id,
+    template: contract.template,
+    parties: contract.parties,
+    fields: contract.fields,
+    source: 'contract'
+  };
+}
+
+function transactionEventsFromElement(section, transactionId, contractsById) {
+  const candidates = directTransactionEventElements(section);
+  const events = candidates
+    .map((element, index) => transactionEventFromElement(element, transactionId, index + 1, contractsById))
+    .filter(Boolean);
+  if (events.length) return events;
+  return transactionEventsFromText(textWithBreaks(section), transactionId, contractsById);
+}
+
+function directTransactionEventElements(section) {
+  const selector = [
+    '.event',
+    '[data-event]',
+    '[data-transaction-event]',
+    '[data-node]',
+    'details',
+    'li'
+  ].join(',');
+  const candidates = Array.from(section.querySelectorAll(selector))
+    .filter(isTransactionEventElement);
+  return candidates.filter(element =>
+    !candidates.some(other => other !== element && other.contains(element) && isTransactionEventElement(other))
+  );
+}
+
+function isTransactionEventElement(element) {
+  if (!element) return false;
+  const text = transactionTextForElement(element);
+  return looksLikeTransactionEventText(text);
+}
+
+function transactionEventFromElement(element, transactionId, index, contractsById) {
+  const text = transactionTextForElement(element);
+  const event = inferTransactionEvent(text, transactionId, index, contractsById);
+  if (!event) return null;
+  const children = Array.from(element.children || [])
+    .flatMap(child => {
+      if (child.tagName && child.tagName.toLowerCase() === 'summary') return [];
+      if (isTransactionEventElement(child)) return [child];
+      return directTransactionEventElements(child);
+    })
+    .map((child, childIndex) => transactionEventFromElement(child, transactionId, String(index) + '-' + (childIndex + 1), contractsById))
+    .filter(Boolean);
+  if (children.length) event.children = children;
+  return event;
+}
+
+function transactionTextForElement(element) {
+  if (!element) return '';
+  if (element.tagName && element.tagName.toLowerCase() === 'details') {
+    const summary = element.querySelector(':scope > summary');
+    if (summary && looksLikeTransactionEventText(summary.textContent)) return cleanText(summary.textContent);
+  }
+  const clone = element.cloneNode(true);
+  for (const nested of Array.from(clone.querySelectorAll('.event,[data-event],[data-transaction-event],[data-node],details,li'))) {
+    if (nested !== clone) nested.remove();
+  }
+  return cleanText(clone.textContent || element.textContent);
+}
+
+function textWithBreaks(node) {
+  if (!node) return '';
+  if (node.nodeType === Node.TEXT_NODE) return node.textContent || '';
+  if (node.nodeType !== Node.ELEMENT_NODE && node.nodeType !== Node.DOCUMENT_FRAGMENT_NODE) return '';
+  if (node.nodeType === Node.ELEMENT_NODE && node.tagName && node.tagName.toLowerCase() === 'br') return '\n';
+  let text = '';
+  for (const child of Array.from(node.childNodes || [])) text += textWithBreaks(child);
+  return text;
+}
+
+function transactionsFromDamlTransactionCode(section, contractsById) {
+  const text = textWithBreaks(section);
+  if (!/\bTX\s+\d+\b/.test(text) || !/Transactions:/i.test(text)) return [];
+  return damlTransactionsFromText(text, contractsById);
+}
+
+function damlTransactionsFromText(text, contractsById) {
+  const contractMap = contractsById || new Map();
+  const transactions = [];
+  let currentTx = null;
+  let pendingNodeId = '';
+  const stack = [];
+
+  for (const rawLine of String(text || '').replace(/\r/g, '\n').split('\n')) {
+    const line = rawLine.replace(/\u00a0/g, ' ');
+    const trimmed = cleanText(line);
+    if (!trimmed || /^Transactions:?$/i.test(trimmed)) continue;
+
+    const txMatch = trimmed.match(/^TX\s+(\d+)\b(.*)$/i);
+    if (txMatch) {
+      currentTx = {
+        id: txMatch[1],
+        label: 'Transaction #' + txMatch[1],
+        events: [],
+        rawText: trimmed
+      };
+      transactions.push(currentTx);
+      pendingNodeId = '';
+      stack.length = 0;
+      continue;
+    }
+    if (!currentTx) continue;
+
+    const idOnly = trimmed.match(/^#\d+:\d+$/);
+    if (idOnly) {
+      pendingNodeId = idOnly[0];
+      continue;
+    }
+
+    if (!looksLikeTransactionEventText(trimmed)) continue;
+    const indent = leadingWhitespace(line);
+    const event = inferDamlTransactionEvent(trimmed, currentTx.id, currentTx.events.length + 1, pendingNodeId, contractMap);
+    if (!event) continue;
+
+    while (stack.length && stack[stack.length - 1].indent >= indent) stack.pop();
+    const parent = stack.length ? stack[stack.length - 1].event : null;
+    if (parent) {
+      parent.children = parent.children || [];
+      parent.children.push(event);
+    } else {
+      currentTx.events.push(event);
+    }
+    stack.push({ indent, event });
+    pendingNodeId = '';
+  }
+
+  return transactions.filter(tx => tx.events.length > 0);
+}
+
+function inferDamlTransactionEvent(text, transactionId, index, nodeId, contractsById) {
+  const eventText = cleanText(text);
+  const kind = inferTransactionKind(eventText);
+  const targetContractId = kind === 'Create'
+    ? (nodeId || contractIdFromText(eventText))
+    : (contractIdAfterAction(eventText) || contractIdFromText(eventText) || nodeId);
+  const contract = targetContractId ? contractsById.get(targetContractId) : null;
+  const template = contract ? contract.template : templateFromTransactionText(eventText, kind);
+  const label = transactionEventLabel(kind, eventText, contract, targetContractId);
+  return {
+    id: 'tx-' + transactionId + '-' + index,
+    kind,
+    label,
+    contractId: targetContractId || '',
+    eventId: nodeId || '',
+    template: template || '',
+    actors: partiesFromTransactionText(eventText),
+    parties: contract ? contract.parties : partiesFromTransactionText(eventText),
+    fields: contract ? contract.fields : fieldsFromTransactionText(eventText),
+    rawText: eventText,
+    source: 'transaction'
+  };
+}
+
+function transactionEventsFromText(text, transactionId, contractsById) {
+  return transactionEventLines(text)
+    .map((line, index) => inferTransactionEvent(line, transactionId, index + 1, contractsById || new Map()))
+    .filter(Boolean);
+}
+
+function transactionEventLines(text) {
+  const raw = String(text || '').replace(/\r/g, '\n');
+  const lines = raw.split(/\n+/).map(cleanText).filter(Boolean);
+  const meaningful = lines.filter(looksLikeTransactionEventText);
+  if (meaningful.length > 0) return meaningful;
+  return cleanText(raw)
+    .split(/(?=\b(?:create|created|exercise|exercised|archive|archived|fetch|fetched|lookup|rollback)\b)/i)
+    .map(cleanText)
+    .filter(looksLikeTransactionEventText);
+}
+
+function inferTransactionEvent(text, transactionId, index, contractsById) {
+  const eventText = cleanText(text);
+  if (!looksLikeTransactionEventText(eventText)) return null;
+  const contractId = contractIdFromText(eventText);
+  const contractMap = contractsById || new Map();
+  const contract = contractId ? contractMap.get(contractId) : null;
+  const kind = inferTransactionKind(eventText);
+  const template = contract ? contract.template : templateFromTransactionText(eventText, kind);
+  const label = transactionEventLabel(kind, eventText, contract, contractId);
+  return {
+    id: 'tx-' + transactionId + '-' + index,
+    kind,
+    label,
+    contractId: contractId || '',
+    template: template || '',
+    actors: partiesFromTransactionText(eventText),
+    parties: contract ? contract.parties : [],
+    fields: contract ? contract.fields : [],
+    rawText: eventText,
+    source: 'transaction'
+  };
+}
+
+function looksLikeTransactionEventText(text) {
+  const value = cleanText(text).toLowerCase();
+  if (!value || value.length > 1600) return false;
+  return /\b(create|creates|created|exercise|exercises|exercised|archive|archives|archived|fetch|fetches|fetched|lookup|lookups|rollback)\b/.test(value) ||
+    /#\d+:\d+/.test(value) && /\b(contract|node|event|choice)\b/.test(value);
+}
+
+function inferTransactionKind(text) {
+  const value = String(text || '').toLowerCase();
+  if (/\b(archive|archives|archived)\b/.test(value)) return 'Archive';
+  if (/\b(exercise|exercises|exercised)\b/.test(value)) return 'Exercise';
+  if (/\b(fetch|fetches|fetched)\b/.test(value)) return 'Fetch';
+  if (/\b(lookup|lookups)\b/.test(value)) return 'Lookup';
+  if (/\brollback\b/.test(value)) return 'Rollback';
+  if (/\b(create|creates|created)\b/.test(value)) return 'Create';
+  return 'Event';
+}
+
+function contractIdFromText(text) {
+  const match = String(text || '').match(/#\d+:\d+/);
+  return match ? match[0] : '';
+}
+
+function transactionIdFromText(text) {
+  const explicit = String(text || '').match(/\btransaction\s*#?\s*(\d+)\b/i);
+  if (explicit) return explicit[1];
+  const contractId = contractIdFromText(text);
+  return contractId ? transactionIdFromContractId(contractId) : '';
+}
+
+function templateFromTransactionText(text, kind) {
+  const value = cleanText(text);
+  const withoutContract = value.replace(/#\d+:\d+.*/, '').trim();
+  const create = withoutContract.match(/\b(?:create|creates|created)\s+(.+)$/i);
+  if (create) return cleanTransactionLabel(create[1]);
+  const exercise = withoutContract.match(/\b(?:exercise|exercises|exercised)\s+(.+?)(?:\s+on\b|$)/i);
+  if (exercise && !/^archive$/i.test(exercise[1])) return cleanTransactionLabel(exercise[1]);
+  const fetch = value.match(/\b(?:fetch|fetches|fetched)\s+#\d+:\d+\s+\(([^)]+)\)/i);
+  if (fetch) return cleanTransactionLabel(fetch[1]);
+  const onTemplate = value.match(/\bon\s+#\d+:\d+\s+\(([^)]+)\)/i) || withoutContract.match(/\bon\s+(.+)$/i);
+  if (onTemplate) return cleanTransactionLabel(onTemplate[1]);
+  return kind === 'Archive' ? 'Archive' : '';
+}
+
+function transactionLabelFromText(text, kind, contractId) {
+  const template = templateFromTransactionText(text, kind);
+  if (template && template !== 'Archive') return template.split(':').pop().split('.').pop();
+  if (kind === 'Archive' && contractId) return 'Archive ' + contractId;
+  return shortValue(cleanText(text));
+}
+
+function transactionEventLabel(kind, text, contract, contractId) {
+  if (kind === 'Exercise') return transactionLabelFromText(text, kind, contractId);
+  if (kind === 'Create' && contract) return contract.templateShort;
+  if ((kind === 'Fetch' || kind === 'Archive') && contract) return contract.templateShort;
+  return transactionLabelFromText(text, kind, contractId);
+}
+
+function cleanTransactionLabel(text) {
+  return cleanText(text)
+    .replace(/\b(children|child events?)\b.*$/i, '')
+    .replace(/\bwith\b.*$/i, '')
+    .trim();
+}
+
+function contractIdAfterAction(text) {
+  const value = String(text || '');
+  const on = value.match(/\b(?:on|fetches?|fetched|archives?|archived)\s+(#\d+:\d+)/i);
+  if (on) return on[1];
+  return contractIdFromText(value);
+}
+
+function partiesFromTransactionText(text) {
+  const parties = [];
+  const seen = new Set();
+  for (const match of String(text || '').matchAll(/'([^']+)'/g)) {
+    const name = cleanPartyValue(match[1]);
+    if (!looksLikePartyValue(name) || seen.has(name)) continue;
+    seen.add(name);
+    parties.push({ name, roles: ['controller'] });
+  }
+  return parties;
+}
+
+function fieldsFromTransactionText(text) {
+  const withIndex = String(text || '').toLowerCase().indexOf(' with ');
+  if (withIndex < 0) return [];
+  return String(text).slice(withIndex + 6)
+    .split(';')
+    .map(part => part.trim())
+    .map(part => {
+      const match = part.match(/^([A-Za-z_][A-Za-z0-9_']*)\s*=\s*(.+)$/);
+      return match ? { name: match[1], value: cleanText(match[2]) } : null;
+    })
+    .filter(Boolean);
+}
+
+function leadingWhitespace(text) {
+  const match = String(text || '').match(/^\s*/);
+  return match ? match[0].length : 0;
+}
+
+function rawTransactionEvent(transactionId, text) {
+  return {
+    id: 'tx-' + transactionId + '-raw',
+    kind: 'Raw',
+    label: shortValue(text),
+    rawText: text,
+    source: 'raw'
+  };
+}
+
+function mergeTransactionEvents(primary, fallback) {
+  const merged = [];
+  const seen = new Set();
+  for (const event of (primary || []).concat(fallback || [])) {
+    if (!event) continue;
+    const key = transactionEventKey(event);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(event);
+  }
+  return merged;
+}
+
+function transactionEventKey(event) {
+  const kind = String(event.kind || '').toLowerCase();
+  if (event.contractId) return kind + '|contract|' + event.contractId;
+  if (event.label) return kind + '|label|' + String(event.label).toLowerCase();
+  return kind + '|raw|' + String(event.rawText || '').toLowerCase().slice(0, 120);
 }
 
 function render() {
@@ -474,7 +850,7 @@ function renderPartyOverview(contracts, parties) {
   return el('div', { className: 'party-role-list compact' }, parties.map(name => {
     const roles = rolesForPartyAcrossContracts(contracts, name);
     return el('div', { className: 'party-role-row' }, [
-      partyChip({ name, roles }),
+      partyChip({ name, roles }, null, false),
       el('div', { className: 'role-stack' }, partyRoleLabels(roles).map(label =>
         el('span', { className: 'party-role-badge ' + roleCssClass(label), title: roleDescription(label) }, label)
       )),
@@ -493,7 +869,7 @@ function renderTxPreview(transactions) {
     }, [
       eventBadge('Tx'),
       el('span', {}, tx.label),
-      el('span', { className: 'muted' }, tx.events.length + ' events')
+      el('span', { className: 'muted' }, flattenEvents(tx.events).length + ' events')
     ])
   ));
 }
@@ -600,22 +976,25 @@ function renderTxTreeView() {
 }
 
 function txButton(tx) {
+  const eventCount = flattenEvents(tx.events).length;
   return el('button', {
     className: 'tx-row' + (tx.id === state.selectedTransactionId ? ' selected' : ''),
     type: 'button',
     onclick: () => { state.selectedTransactionId = tx.id; render(); }
   }, [
     el('span', { className: 'tx-title' }, tx.label),
-    el('span', { className: 'muted' }, tx.events.length + ' events')
+    el('span', { className: 'muted' }, eventCount + ' events')
   ]);
 }
 
 function txDetail(tx) {
+  const events = tx.events.length ? tx.events : (tx.rawText ? [rawTransactionEvent(tx.id, tx.rawText)] : []);
+  const eventCount = flattenEvents(events).length;
   return el('article', { className: 'inspector' }, [
     el('header', { className: 'inspector-header' }, [
       el('div', {}, [
         el('h2', {}, tx.label),
-        el('div', { className: 'muted' }, tx.events.length + ' parsed events')
+        el('div', { className: 'muted' }, eventCount + ' parsed events')
       ]),
       el('div', { className: 'button-row' }, [
         actionButton('Expand all', () => document.querySelectorAll('details.tx-node').forEach(d => d.open = true)),
@@ -623,27 +1002,39 @@ function txDetail(tx) {
       ])
     ]),
     txSummary(tx),
-    el('div', { className: 'tx-tree' }, tx.events.map((event, index) => eventNode(event, index + 1))),
-    tx.rawHtml ? sectionBlock('Original Transaction Markup', rawRendered(tx.rawHtml)) : null
+    events.length ? el('div', { className: 'tx-tree' }, events.map((event, index) => eventNode(event, index + 1))) : emptyState('No transaction events were parsed. Open Raw for the original result.')
   ]);
 }
 
 function txSummary(tx) {
-  const parties = Array.from(new Set(tx.events.flatMap(event => (event.parties || []).map(p => p.name)))).sort();
+  const sourceEvents = tx.events.length ? tx.events : (tx.rawText ? [rawTransactionEvent(tx.id, tx.rawText)] : []);
+  const events = flattenEvents(sourceEvents);
+  const parties = Array.from(new Set(events.flatMap(event => (event.parties || []).map(p => p.name)))).sort();
   return el('section', { className: 'tx-summary-panel' }, [
-    metricRow('Events', String(tx.events.length)),
+    metricRow('Events', String(events.length)),
     metricRow('Parties', parties.length ? parties.join(', ') : 'Unavailable'),
-    metricRow('Created contracts', String(tx.events.filter(e => String(e.kind).toLowerCase().includes('create')).length)),
-    metricRow('Archived/results', String(tx.events.filter(e => String(e.kind).toLowerCase().includes('archived')).length))
+    metricRow('Created contracts', String(events.filter(e => String(e.kind).toLowerCase().includes('create')).length)),
+    metricRow('Archived/results', String(events.filter(e => /archive|archived/i.test(String(e.kind))).length))
   ]);
 }
 
 function eventNode(event, index) {
+  return eventNodeAt(event, String(index));
+}
+
+function eventNodeAt(event, indexLabel) {
+  const children = event.children || [];
   return el('details', { className: 'tx-node', open: true }, [
     el('summary', {}, [
-      el('span', { className: 'tx-step' }, String(index)),
+      el('button', {
+        className: 'tx-toggle',
+        type: 'button',
+        title: 'Expand or collapse transaction event',
+        onclick: toggleEventNode
+      }),
+      el('span', { className: 'tx-step' }, indexLabel),
       eventBadge(event.kind),
-      el('span', { className: 'tx-event-title' }, event.label),
+      eventHeadline(event),
       event.contractId ? el('button', {
         className: 'link-button mono',
         type: 'button',
@@ -652,10 +1043,78 @@ function eventNode(event, index) {
     ]),
     el('div', { className: 'tx-node-body' }, [
       event.template ? el('div', { className: 'muted' }, event.template) : null,
-      event.parties && event.parties.length ? el('div', { className: 'chip-row' }, event.parties.map(partyChip)) : null,
-      event.fields && event.fields.length ? compactFieldGrid(event.fields.slice(0, 6)) : null
+      event.parties && event.parties.length ? el('div', { className: 'chip-row' }, event.parties.map(party => partyChip(party))) : null,
+      event.fields && event.fields.length ? compactFieldGrid(event.fields.slice(0, 6)) : null,
+      event.rawText && !event.fields.length ? el('div', { className: 'mono muted wrap' }, event.rawText) : null,
+      children.length ? el('div', { className: 'tx-children' }, children.map((child, index) => eventNodeAt(child, indexLabel + '.' + (index + 1)))) : null
     ])
   ]);
+}
+
+function toggleEventNode(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  const node = event.currentTarget.closest('details');
+  if (node) node.open = !node.open;
+}
+
+function eventHeadline(event) {
+  const kind = String(event.kind || 'Event');
+  const actors = (event.actors && event.actors.length ? event.actors : []).map(party => party.name || party).filter(Boolean);
+  const parts = [];
+  if (actors.length) {
+    actors.slice(0, 2).forEach((party, index) => {
+      if (index > 0) parts.push(txWord('and', 'tx-keyword'));
+      parts.push(txParty(party));
+    });
+    if (actors.length > 2) parts.push(txWord('+' + (actors.length - 2), 'tx-muted-token'));
+  }
+
+  const verb = transactionVerb(kind);
+  if (verb) parts.push(txWord(verb, 'tx-keyword tx-keyword-' + eventKindCss(kind)));
+
+  if (kind === 'Exercise') {
+    parts.push(txWord(event.label || 'choice', 'tx-choice'));
+    if (event.contractId) parts.push(txWord('on', 'tx-keyword'));
+    if (event.template) parts.push(txWord(templateShortName(event.template), 'tx-template'));
+  } else if (kind === 'Create') {
+    parts.push(txWord(templateShortName(event.template || event.label), 'tx-template'));
+  } else if (kind === 'Fetch' || kind === 'Archive' || kind === 'Archived/Result') {
+    if (event.template || event.label) parts.push(txWord(templateShortName(event.template || event.label), 'tx-template'));
+  } else {
+    parts.push(txWord(event.label || kind, 'tx-template'));
+  }
+
+  return el('span', { className: 'tx-event-title' }, parts.length ? parts : [document.createTextNode(event.label || kind)]);
+}
+
+function txParty(name) {
+  return el('span', { className: 'tx-party party-' + stableColorIndex(name), title: 'Party ' + name }, name);
+}
+
+function txWord(text, className) {
+  return el('span', { className }, text);
+}
+
+function transactionVerb(kind) {
+  const value = String(kind || '').toLowerCase();
+  if (value.includes('create')) return 'creates';
+  if (value.includes('exercise')) return 'exercises';
+  if (value.includes('fetch')) return 'fetches';
+  if (value.includes('archive')) return 'archives';
+  if (value.includes('lookup')) return 'looks up';
+  if (value.includes('rollback')) return 'rolls back';
+  return '';
+}
+
+function eventKindCss(kind) {
+  return String(kind || '').toLowerCase().replace(/[^a-z]+/g, '-');
+}
+
+function templateShortName(value) {
+  const text = String(value || '').replace(/@[A-Za-z0-9]+$/, '');
+  const afterColon = text.split(':').pop();
+  return afterColon.split('.').pop() || afterColon || text;
 }
 
 function renderDisclosureView() {
@@ -857,8 +1316,9 @@ function htmlFragment(html) {
 }
 
 function extractConsoleEntries(root) {
-  const entries = [];
+  const entries = extractTransactionTraceEntries(root);
   for (const element of Array.from(root.querySelectorAll(CONSOLE_SELECTOR))) {
+    if (element.closest('.transaction,.transaction-tree,.tx-tree,[data-transaction],[data-transaction-tree],[data-tx-tree]')) continue;
     const text = cleanConsoleText(element.textContent);
     const entry = makeConsoleEntry(text, element.outerHTML || element.innerHTML, sourceForConsoleElement(element), 'script result');
     if (entry) entries.push(entry);
@@ -877,6 +1337,42 @@ function extractConsoleEntries(root) {
     }
   }
   return mergeConsoleEntries(entries);
+}
+
+function extractTransactionTraceEntries(root) {
+  const entries = [];
+  for (const section of transactionSections(root)) {
+    for (const line of consoleLinesFromTransactionTraceText(textWithBreaks(section))) {
+      const entry = makeConsoleEntry(line, '', 'trace', 'script trace');
+      if (entry) entries.push(entry);
+    }
+  }
+  return entries;
+}
+
+function consoleLinesFromTransactionTraceText(text) {
+  const entries = [];
+  let inTrace = false;
+  for (const rawLine of String(text || '').replace(/\r/g, '\n').split('\n')) {
+    const line = cleanConsoleText(rawLine);
+    if (!line) continue;
+    const trace = line.match(/^Trace:\s*(.*)$/i);
+    if (trace) {
+      inTrace = true;
+      const inline = cleanConsoleText(trace[1] || '');
+      if (inline) entries.push(unquoteConsoleLine(inline));
+      continue;
+    }
+    if (!inTrace) continue;
+    if (/^(Transactions|Active contracts|Return value):/i.test(line)) break;
+    const unquoted = unquoteConsoleLine(line);
+    if (looksLikeConsoleLine(unquoted) || /^["'].*["']$/.test(line)) entries.push(unquoted);
+  }
+  return entries;
+}
+
+function unquoteConsoleLine(text) {
+  return cleanConsoleText(text).replace(/^["'](.+)["']$/, '$1');
 }
 
 function sourceForConsoleElement(element) {
@@ -961,7 +1457,7 @@ function partyRoleList(parties) {
   return el('div', { className: 'party-role-list' }, parties.map(party => {
     const labels = partyRoleLabels(party.roles);
     return el('div', { className: 'party-role-row' }, [
-      partyChip(party),
+      partyChip(party, null, false),
       el('div', { className: 'role-stack' }, labels.map(label =>
         el('span', { className: 'party-role-badge ' + roleCssClass(label), title: roleDescription(label) }, label)
       )),
@@ -981,16 +1477,19 @@ function rolesForPartyAcrossContracts(contracts, partyName) {
   return Array.from(new Set(roles));
 }
 
-function partyChip(party, roles) {
+// `showRoles === false` renders a name-only chip; used where an adjacent role-stack
+// already lists the roles, so embedding them in the chip too would be redundant.
+function partyChip(party, roles, showRoles) {
   const label = typeof party === 'string' ? party : (party && party.name) || '';
   const roleLabels = partyRoleLabels(roles || (party && party.roles));
   const title = roleLabels.length ? label + ' - ' + roleLabels.map(roleDescription).join('; ') : label;
-  return el('span', { className: 'party-chip party-' + stableColorIndex(label), title }, [
-    el('span', { className: 'party-name' }, label || 'unknown'),
-    ...roleLabels.slice(0, 2).map(role =>
-      el('span', { className: 'party-chip-role ' + roleCssClass(role) }, role)
-    )
-  ]);
+  const children = [el('span', { className: 'party-name' }, label || 'unknown')];
+  if (showRoles !== false) {
+    for (const role of roleLabels.slice(0, 2)) {
+      children.push(el('span', { className: 'party-chip-role ' + roleCssClass(role) }, role));
+    }
+  }
+  return el('span', { className: 'party-chip party-' + stableColorIndex(label), title }, children);
 }
 
 function copyButton(value, title) {
@@ -1031,10 +1530,13 @@ function filteredTransactions() {
   const query = state.search.toLowerCase();
   return transactionsForDisplay().map(tx => {
     const events = tx.events.filter(event => {
-      const contract = event.contractId ? state.model.contracts.find(item => item.id === event.contractId) : null;
-      if (contract && !state.showArchived && contract.archived) return false;
+      const visibleEvents = flattenEvents([event]);
+      const contract = visibleEvents
+        .map(item => item.contractId ? state.model.contracts.find(contract => contract.id === item.contractId) : null)
+        .find(Boolean);
+      if (contract && !state.showArchived && contract.archived && event.source === 'contract') return false;
       if (!query) return true;
-      return [event.kind, event.label, event.template, event.contractId]
+      return visibleEvents.flatMap(item => [item.kind, item.label, item.template, item.contractId, item.rawText])
         .join(' ')
         .toLowerCase()
         .includes(query);
@@ -1049,25 +1551,39 @@ function filteredTransactions() {
 }
 
 function transactionsForDisplay() {
-  return state.model.transactions.length ? state.model.transactions : synthesizeTransactionsFromContracts(state.model.contracts);
+  return mergeTransactionGroups(state.model.transactions, synthesizeTransactionsFromContracts(state.model.contracts));
 }
 
 function synthesizeTransactionsFromContracts(contracts) {
+  const map = transactionMapFromContracts(contracts);
+  return Array.from(map.values()).sort((a, b) => transactionSortKey(a.id) - transactionSortKey(b.id));
+}
+
+function mergeTransactionGroups(primary, fallback) {
   const map = new Map();
-  for (const contract of contracts) {
-    const id = contract.transactionId || 'unknown';
-    if (!map.has(id)) map.set(id, { id, label: id === 'unknown' ? 'Unknown transaction' : 'Transaction #' + id, events: [] });
-    map.get(id).events.push({
-      id: contract.id,
-      kind: contract.archived ? 'Archived/Result' : 'Create',
-      label: contract.templateShort,
-      contractId: contract.id,
-      template: contract.template,
-      parties: contract.parties,
-      fields: contract.fields
-    });
+  for (const tx of (fallback || []).concat(primary || [])) {
+    if (!tx) continue;
+    const existing = map.get(tx.id);
+    if (!existing) {
+      map.set(tx.id, Object.assign({}, tx, { events: (tx.events || []).slice() }));
+      continue;
+    }
+    existing.label = tx.label || existing.label;
+    existing.rawHtml = tx.rawHtml || existing.rawHtml;
+    existing.rawText = tx.rawText || existing.rawText;
+    existing.events = mergeTransactionEvents(tx.events || [], existing.events || []);
   }
   return Array.from(map.values()).sort((a, b) => transactionSortKey(a.id) - transactionSortKey(b.id));
+}
+
+function flattenEvents(events) {
+  const flattened = [];
+  for (const event of events || []) {
+    if (!event) continue;
+    flattened.push(event);
+    flattened.push(...flattenEvents(event.children || []));
+  }
+  return flattened;
 }
 
 function matchesSearch(text) {
@@ -1228,13 +1744,15 @@ function roleList(text) {
   if (value.includes('signatory')) roles.push('signatory');
   if (value.includes('observer')) roles.push('observer');
   if (value.includes('witness')) roles.push('witness');
+  if (value.includes('divulged')) roles.push('divulged');
   if (value === 'visible') roles.push('visible');
   if (!roles.length && value) roles.push(cleanRole(value));
   return roles;
 }
 
 function partyRoleLabels(roles) {
-  const normalized = Array.from(new Set((roles || []).map(cleanRole).filter(Boolean)));
+  const list = Array.isArray(roles) ? roles : [];
+  const normalized = Array.from(new Set(list.map(cleanRole).filter(Boolean)));
   const labels = [];
   for (const role of normalized) {
     if (role === 'signatory' || role === 'observer') {
@@ -1478,6 +1996,12 @@ if (typeof module !== 'undefined') {
     roleDescription,
     classifyDisclosureState,
     synthesizeTransactionsFromContracts,
+    transactionEventsFromText,
+    damlTransactionsFromText,
+    inferTransactionEvent,
+    mergeTransactionGroups,
+    flattenEvents,
+    consoleLinesFromTransactionTraceText,
     normalizeConsoleText,
     looksLikeConsoleLine,
     mergeConsoleEntries

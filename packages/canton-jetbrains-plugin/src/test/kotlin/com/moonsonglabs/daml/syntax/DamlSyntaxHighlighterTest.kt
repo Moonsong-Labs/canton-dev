@@ -20,7 +20,7 @@ class DamlSyntaxHighlighterTest {
         assertHighlights(DamlTokenTypes.CONTROL_KEYWORD, DamlSyntaxHighlighter.CONTROL_KEYWORD)
         assertHighlights(DamlTokenTypes.PRELUDE_TYPE, DamlSyntaxHighlighter.PRELUDE_TYPE)
         assertHighlights(DamlTokenTypes.BUILTIN_IDENTIFIER, DamlSyntaxHighlighter.BUILTIN)
-        assertHighlights(DamlTokenTypes.PREDEFINED_IDENTIFIER, DamlSyntaxHighlighter.PREDEFINED_VALUE)
+        assertHighlights(DamlTokenTypes.PREDEFINED_IDENTIFIER, DamlSyntaxHighlighter.CONSTRUCTOR)
         assertHighlights(DamlTokenTypes.BOOLEAN_LITERAL, DamlSyntaxHighlighter.BOOLEAN)
         assertHighlights(DamlTokenTypes.UNIT_LITERAL, DamlSyntaxHighlighter.PREDEFINED_VALUE)
         assertHighlights(DamlTokenTypes.EMPTY_LIST_LITERAL, DamlSyntaxHighlighter.PREDEFINED_VALUE)
@@ -30,14 +30,18 @@ class DamlSyntaxHighlighterTest {
     }
 
     @Test
-    fun `uses visible defaults for builtins and party names`() {
+    fun `uses visible defaults for types constructors builtins and party names`() {
         assertSame(
-            com.intellij.openapi.editor.DefaultLanguageHighlighterColors.CLASS_REFERENCE,
+            com.intellij.openapi.editor.DefaultLanguageHighlighterColors.CLASS_NAME,
             DamlSyntaxHighlighter.TYPE_NAME.fallbackAttributeKey
         )
         assertSame(
-            com.intellij.openapi.editor.DefaultLanguageHighlighterColors.CLASS_REFERENCE,
+            com.intellij.openapi.editor.DefaultLanguageHighlighterColors.CLASS_NAME,
             DamlSyntaxHighlighter.PRELUDE_TYPE.fallbackAttributeKey
+        )
+        assertSame(
+            com.intellij.openapi.editor.DefaultLanguageHighlighterColors.STATIC_FIELD,
+            DamlSyntaxHighlighter.CONSTRUCTOR.fallbackAttributeKey
         )
         assertSame(
             com.intellij.openapi.editor.DefaultLanguageHighlighterColors.KEYWORD,
