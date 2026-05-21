@@ -24,7 +24,12 @@ class DamlModuleReferenceContributor : PsiReferenceContributor() {
 private class DamlModuleReferenceProvider : PsiReferenceProvider() {
     override fun getReferencesByElement(element: PsiElement, context: ProcessingContext): Array<PsiReference> {
         val type = element.node?.elementType
-        if (type != DamlTokenTypes.TYPE_NAME && type != DamlTokenTypes.IDENTIFIER && type != DamlTokenTypes.OPERATOR) {
+        if (type != DamlTokenTypes.TYPE_NAME &&
+            type != DamlTokenTypes.PRELUDE_TYPE &&
+            type != DamlTokenTypes.IDENTIFIER &&
+            type != DamlTokenTypes.OPERATOR &&
+            type != DamlTokenTypes.DOT
+        ) {
             return PsiReference.EMPTY_ARRAY
         }
         if (type == DamlTokenTypes.OPERATOR && element.text != ".") return PsiReference.EMPTY_ARRAY

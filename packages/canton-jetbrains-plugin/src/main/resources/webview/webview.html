@@ -14,15 +14,23 @@
     <title>DAML Script Results</title>
     <link rel="stylesheet" type="text/css" href="$webviewCss"/>
 </head>
-<body class="empty hide_archived hide_transaction hidden_disclosure hide_note">
-    <div class="toolbar">
-        <button id="toggle_view" class="primary" onclick="toggle_view()">Show transaction view</button>
-        <label><input type="checkbox" id="show_archived" onchange="show_archived_changed()"/> Show archived</label>
-        <label><input type="checkbox" id="show_detailed_disclosure" onchange="toggle_detailed_disclosure()"/> Show detailed disclosure</label>
+<body class="empty hide_archived hidden_disclosure $webviewTheme">
+    <div id="app" class="explorer">
+        <header class="explorer-header">
+            <nav id="view_tabs" class="tabs" aria-label="Script result views"></nav>
+            <div class="toolbar">
+                <label class="search">
+                    <span class="search-icon" aria-hidden="true">/</span>
+                    <input id="search_input" type="search" placeholder="Search results..."/>
+                </label>
+                <label class="toggle"><input type="checkbox" id="show_archived"/> Archived</label>
+                <label class="toggle"><input type="checkbox" id="show_detailed_disclosure"/> Detailed disclosure</label>
+                <span id="progress_status" class="progress-status" hidden></span>
+            </div>
+        </header>
+        <div class="empty-message">No script results yet. Run a script in your .daml file to see results here.</div>
+        <main id="view_root" class="view-root"></main>
     </div>
-    <div class="empty-message">No script results yet. Run a script in your .daml file to see results here.</div>
-    <div id="note" class="note"></div>
-    <div id="content"></div>
     <script type="text/javascript" src="$webviewSrc"></script>
 </body>
 </html>

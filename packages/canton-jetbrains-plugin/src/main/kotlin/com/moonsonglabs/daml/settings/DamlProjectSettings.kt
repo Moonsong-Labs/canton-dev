@@ -28,13 +28,16 @@ class DamlProjectSettings : PersistentStateComponent<DamlProjectSettings.State> 
         var multiPackageIdeSupport: Boolean = false,
         var showArchived: Boolean = false,
         var showDetailedDisclosure: Boolean = false,
-        var selectedView: String = "table"
+        var selectedView: String = "overview"
     )
 
     private var state = State()
 
     override fun getState(): State = state
-    override fun loadState(state: State) { this.state = state }
+    override fun loadState(state: State) {
+        state.selectedView = normalizeScriptResultsView(state.selectedView)
+        this.state = state
+    }
 
     var binaryPath: String
         get() = state.binaryPath
@@ -76,10 +79,19 @@ class DamlProjectSettings : PersistentStateComponent<DamlProjectSettings.State> 
         get() = state.showDetailedDisclosure
         set(value) { state.showDetailedDisclosure = value }
     var selectedView: String
-        get() = state.selectedView
-        set(value) { state.selectedView = value.takeIf { it == "table" || it == "transaction" } ?: "table" }
+        get() = normalizeScriptResultsView(state.selectedView)
+        set(value) { state.selectedView = normalizeScriptResultsView(value) }
 
     companion object {
+        private val scriptResultsViews = setOf("overview", "contracts", "txTree", "disclosure", "console", "raw")
+
+        fun normalizeScriptResultsView(value: String?): String = when {
+            value == "table" -> "contracts"
+            value == "transaction" -> "txTree"
+            value != null && value in scriptResultsViews -> value
+            else -> "overview"
+        }
+
         fun getInstance(project: Project): DamlProjectSettings = project.service()
     }
 }

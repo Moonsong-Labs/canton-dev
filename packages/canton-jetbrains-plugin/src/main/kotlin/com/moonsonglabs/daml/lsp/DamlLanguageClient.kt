@@ -103,7 +103,7 @@ class DamlLanguageClient(project: Project) : LanguageClientImpl(project) {
     @JsonNotification("daml/virtualResource/note")
     fun virtualResourceNote(payload: Map<String, Any?>) {
         val uri = payload["uri"] as? String ?: return
-        val note = payload["note"] as? String ?: return
+        val note = (payload["note"] ?: payload["contents"] ?: payload["message"]) as? String ?: return
         VirtualResourceManager.getInstance(project).note(uri, note)
     }
 
