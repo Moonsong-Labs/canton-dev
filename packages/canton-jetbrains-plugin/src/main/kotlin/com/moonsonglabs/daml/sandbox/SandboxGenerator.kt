@@ -1,0 +1,293 @@
+package com.moonsonglabs.daml.sandbox
+
+import com.google.gson.GsonBuilder
+import java.nio.file.Files
+import java.nio.file.Path
+import java.nio.file.StandardCopyOption
+import kotlin.io.path.name
+
+class SandboxGenerator {
+    private val gson = GsonBuilder().setPrettyPrinting().create()
+
+    fun generate(profile: SandboxProfile): SandboxGeneratedFiles {
+        val root = generatedRoot(profile)
+        val localDir = root.resolve("local")
+        val scriptsDir = root.resolve("scripts")
+        val darsDir = root.resolve("dars")
+        val logsDir = root.resolve("logs")
+        val dataDir = root.resolve("data")
+        listOf(localDir, scriptsDir, darsDir, logsDir, dataDir).forEach(Files::createDirectories)
+        clearDirectory(darsDir)
+
+        val copiedDars = copyAssignedDars(profile, darsDir)
+        val profileJson = root.resolve("profile.json")
+        val localConfig = localDir.resolve("canton.conf")
+        val localBootstrap = localDir.resolve("bootstrap.canton")
+        val localRunScript = localDir.resolve("run.sh")
+        val uploadScript = scriptsDir.resolve("upload-dars.canton")
+        val allocationScript = scriptsDir.resolve("allocate-parties.canton")
+        val statusScript = scriptsDir.resolve("status.canton")
+
+        Files.writeString(profileJson, gson.toJson(profile))
+        Files.writeString(localConfig, localConfig(profile))
+        Files.writeString(localBootstrap, localBootstrap(profile, copiedDars))
+        Files.writeString(localRunScript, localRunScript(profile))
+        localRunScript.toFile().setExecutable(true, false)
+        Files.writeString(uploadScript, uploadScript(profile, copiedDars))
+        Files.writeString(allocationScript, allocationScript(profile))
+        Files.writeString(statusScript, statusScript(profile))
+        writeGeneratedGitignore(root)
+
+        return SandboxGeneratedFiles(
+            root = root,
+            profileJson = profileJson,
+            localConfig = localConfig,
+            localBootstrap = localBootstrap,
+            localRunScript = localRunScript,
+            uploadScript = uploadScript,
+            allocationScript = allocationScript,
+            statusScript = statusScript,
+            logsDir = logsDir,
+            darsDir = darsDir
+        )
+    }
+
+    fun generatedRoot(profile: SandboxProfile): Path =
+        if (profile.generatedPath.isNotBlank()) Path.of(profile.generatedPath)
+        else Path.of(profile.workspacePath, SandboxDefaults.GENERATED_DIR, profile.id)
+
+    internal fun localConfig(profile: SandboxProfile): String = buildString {
+        appendLine("canton {")
+        appendLine("  sequencers {")
+        profile.synchronizers.forEach { append(sequencerConfig(it.sequencer, "    ")) }
+        appendLine("  }")
+        appendLine("  mediators {")
+        profile.synchronizers.forEach { append(mediatorConfig(it.mediator, "    ")) }
+        appendLine("  }")
+        appendLine("  participants {")
+        profile.participants.forEach { append(participantConfig(it, "    ")) }
+        appendLine("  }")
+        appendLine("}")
+    }
+
+    internal fun localRunScript(profile: SandboxProfile): String = buildString {
+        appendLine("#!/usr/bin/env bash")
+        appendLine("set -euo pipefail")
+        appendLine()
+        appendLine("""HERE="$(cd "$(dirname "${'$'}{BASH_SOURCE[0]}")" && pwd)"""")
+        appendLine("""CONF="${'$'}HERE/canton.conf"""")
+        appendLine("""BOOT="${'$'}HERE/bootstrap.canton"""")
+        appendLine("""LOG_DIR="${'$'}HERE/../logs"""")
+        appendLine("""SDK_VERSION="${'$'}{CANTON_SDK_VERSION:-3.4.11}"""")
+        appendLine("""CANTON_JAR_DEFAULT="${'$'}HOME/.daml/sdk/${'$'}SDK_VERSION/canton/canton.jar"""")
+        appendLine("""CANTON_DPM_JAR_DEFAULT="${'$'}HOME/.dpm/cache/components/canton-enterprise/${'$'}SDK_VERSION/lib/canton-enterprise-${'$'}SDK_VERSION.jar"""")
+        appendLine("""CANTON_JAR="${'$'}{CANTON_JAR:-}"""")
+        appendLine("""if [[ -z "${'$'}CANTON_JAR" ]]; then""")
+        appendLine("""  if [[ -f "${'$'}CANTON_JAR_DEFAULT" ]]; then""")
+        appendLine("    CANTON_JAR=\"${'$'}CANTON_JAR_DEFAULT\"")
+        appendLine("""  elif [[ -f "${'$'}CANTON_DPM_JAR_DEFAULT" ]]; then""")
+        appendLine("    CANTON_JAR=\"${'$'}CANTON_DPM_JAR_DEFAULT\"")
+        appendLine("""  else""")
+        appendLine("""    CANTON_JAR="$(find "${'$'}HOME/.dpm/cache/components" -path '*/lib/canton*.jar' -type f 2>/dev/null | sort -r | head -n 1 || true)"""")
+        appendLine("""  fi""")
+        appendLine("""fi""")
+        appendLine()
+        appendLine("""if [[ ! -f "${'$'}CANTON_JAR" ]]; then""")
+        appendLine("""  echo "canton.jar not found at: ${'$'}CANTON_JAR" >&2""")
+        appendLine("""  echo "Set CANTON_JAR or CANTON_SDK_VERSION. Available SDKs/DPM components:" >&2""")
+        appendLine("""  ls "${'$'}HOME/.daml/sdk" 2>/dev/null >&2 || true""")
+        appendLine("""  find "${'$'}HOME/.dpm/cache/components" -path '*/lib/canton*.jar' -type f 2>/dev/null >&2 || true""")
+        appendLine("  exit 1")
+        appendLine("fi")
+        appendLine()
+        appendLine("""mkdir -p "${'$'}LOG_DIR"""")
+        appendLine("""cd "${'$'}HERE"""")
+        appendLine("""echo "Using ${'$'}CANTON_JAR"""")
+        appendLine("""echo "Working dir: ${'$'}HERE"""")
+        appendLine("""echo "Logs: ${'$'}LOG_DIR/canton.log"""")
+        appendLine("echo")
+        appendLine("echo \"=========================================================\"")
+        appendLine("echo \" Canton sandbox endpoints\"")
+        appendLine("echo \"=========================================================\"")
+        profile.synchronizers.forEach { synchronizer ->
+            appendLine("echo \"  synchronizer ${shellQuote(synchronizer.name)}\"")
+            appendLine("echo \"    sequencer public grpc://localhost:${synchronizer.sequencer.publicPort}\"")
+            appendLine("echo \"    sequencer admin  grpc://localhost:${synchronizer.sequencer.adminPort}\"")
+            appendLine("echo \"    mediator admin   grpc://localhost:${synchronizer.mediator.adminPort}\"")
+        }
+        profile.participants.forEach { participant ->
+            appendLine("echo \"  participant ${shellQuote(participant.name)}\"")
+            appendLine("echo \"    ledger api       grpc://localhost:${participant.ledgerPort}\"")
+            appendLine("echo \"    admin api        grpc://localhost:${participant.adminPort}\"")
+            appendLine("echo \"    json api         http://localhost:${participant.jsonPort}\"")
+        }
+        appendLine("echo \"=========================================================\"")
+        appendLine()
+        appendLine("""exec java -jar "${'$'}CANTON_JAR" daemon -c "${'$'}CONF" --bootstrap "${'$'}BOOT"""")
+    }
+
+    internal fun localBootstrap(profile: SandboxProfile, copiedDars: Map<String, Path>): String = buildString {
+        appendLine("// Generated by the DAML JetBrains plugin. Safe to inspect; regenerate from the sandbox profile.")
+        appendLine("import com.digitalasset.canton.config.RequireTypes.PositiveInt")
+        appendLine("import com.digitalasset.canton.admin.api.client.data.StaticSynchronizerParameters")
+        appendLine("import com.digitalasset.canton.version.ProtocolVersion")
+        appendLine()
+        appendLine("nodes.local.start()")
+        appendLine()
+        profile.synchronizers.forEach { synchronizer ->
+            appendLine("bootstrap.synchronizer(")
+            appendLine("  synchronizerName = \"${scalaString(synchronizer.name)}\",")
+            appendLine("  sequencers = Seq(${synchronizer.sequencer.name}),")
+            appendLine("  mediators = Seq(${synchronizer.mediator.name}),")
+            appendLine("  synchronizerOwners = Seq(${synchronizer.sequencer.name}, ${synchronizer.mediator.name}),")
+            appendLine("  synchronizerThreshold = PositiveInt.one,")
+            appendLine("  staticSynchronizerParameters = StaticSynchronizerParameters.defaultsWithoutKMS(ProtocolVersion.forSynchronizer)")
+            appendLine(")")
+        }
+        appendLine()
+        profile.bindings.filter { it.connected }.forEach { binding ->
+            val participant = profile.participant(binding.participantId) ?: return@forEach
+            val synchronizer = profile.synchronizer(binding.synchronizerId) ?: return@forEach
+            appendLine("${participant.name}.synchronizers.connect_local(${synchronizer.sequencer.name}, alias = \"${scalaString(synchronizer.name)}\")")
+        }
+        appendLine()
+        append(uploadScript(profile, copiedDars))
+        appendLine()
+        append(allocationScript(profile))
+        appendLine()
+        appendLine("health.status")
+        appendLine("println(\"=== sandbox ready ===\")")
+        profile.participants.forEach { participant ->
+            appendLine("println(s\"${participant.name}: parties=${'$'}{${participant.name}.parties.list().map(_.party.toString)}\")")
+        }
+    }
+
+    internal fun uploadScript(profile: SandboxProfile, copiedDars: Map<String, Path>): String = buildString {
+        appendLine("// Upload selected DARs to selected participants.")
+        profile.darAssignments.forEach { assignment ->
+            val copied = copiedDars[assignment.darPath] ?: Path.of(assignment.darPath)
+            assignment.participantIds.forEach { participantId ->
+                val participant = profile.participant(participantId) ?: return@forEach
+                val connectedSynchronizers = profile.connectedSynchronizers(participant.id)
+                if (connectedSynchronizers.isEmpty()) {
+                    appendLine("${participant.name}.dars.upload(\"${scalaString(copied.toAbsolutePath().toString())}\")")
+                } else {
+                    connectedSynchronizers.forEach { synchronizer ->
+                        appendLine(
+                            "${participant.name}.dars.upload(\"${scalaString(copied.toAbsolutePath().toString())}\", " +
+                                "synchronizerId = Some(${participant.name}.synchronizers.id_of(\"${scalaString(synchronizer.name)}\")))"
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    internal fun allocationScript(profile: SandboxProfile): String = buildString {
+        appendLine("// Allocate selected parties on selected participants.")
+        profile.partyAllocations.forEach { allocation ->
+            val participant = profile.participant(allocation.participantId) ?: return@forEach
+            val synchronizer = profile.synchronizer(allocation.synchronizerId) ?: return@forEach
+            appendLine(
+                "${participant.name}.parties.enable(\"${scalaString(allocation.partyHint)}\", " +
+                    "synchronizer = Some(\"${scalaString(synchronizer.name)}\"), " +
+                    "synchronizeParticipants = Seq(${participant.name}))"
+            )
+        }
+    }
+
+    internal fun statusScript(profile: SandboxProfile): String = buildString {
+        appendLine("// Capture node health, DARs, parties, and synchronizer connectivity.")
+        appendLine("health.status")
+        profile.participants.forEach { participant ->
+            appendLine("${participant.name}.health.status")
+            appendLine("${participant.name}.dars.list()")
+            appendLine("${participant.name}.parties.list()")
+            profile.connectedSynchronizers(participant.id).forEach { sync ->
+                appendLine("${participant.name}.synchronizers.is_connected(\"${scalaString(sync.name)}\")")
+            }
+        }
+        profile.synchronizers.forEach { synchronizer ->
+            appendLine("${synchronizer.sequencer.name}.health.status")
+            appendLine("${synchronizer.mediator.name}.health.status")
+        }
+    }
+
+    private fun participantConfig(
+        participant: ParticipantNode,
+        indent: String
+    ): String = buildString {
+        appendLine("$indent${participant.name} {")
+        appendLine("$indent  ledger-api      { address = \"0.0.0.0\", port = ${participant.ledgerPort} }")
+        appendLine("$indent  admin-api       { address = \"0.0.0.0\", port = ${participant.adminPort} }")
+        appendLine("$indent  http-ledger-api { address = \"0.0.0.0\", port = ${participant.jsonPort} }")
+        appendLine("${indent}  storage.type = memory")
+        appendLine("$indent}")
+    }
+
+    private fun sequencerConfig(
+        sequencer: SequencerNode,
+        indent: String
+    ): String = buildString {
+        appendLine("$indent${sequencer.name} {")
+        appendLine("$indent  public-api { address = \"0.0.0.0\", port = ${sequencer.publicPort} }")
+        appendLine("$indent  admin-api  { address = \"0.0.0.0\", port = ${sequencer.adminPort} }")
+        appendLine("${indent}  storage.type = memory")
+        appendLine("$indent}")
+    }
+
+    private fun mediatorConfig(
+        mediator: MediatorNode,
+        indent: String
+    ): String = buildString {
+        appendLine("$indent${mediator.name} {")
+        appendLine("$indent  admin-api { address = \"0.0.0.0\", port = ${mediator.adminPort} }")
+        appendLine("${indent}  storage.type = memory")
+        appendLine("$indent}")
+    }
+
+    private fun copyAssignedDars(profile: SandboxProfile, darsDir: Path): Map<String, Path> {
+        val copied = linkedMapOf<String, Path>()
+        profile.darAssignments.map { it.darPath }.distinct().forEach { rawPath ->
+            val source = Path.of(rawPath)
+            if (!Files.isRegularFile(source)) return@forEach
+            val target = uniqueDarTarget(darsDir, source.name)
+            Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING)
+            copied[rawPath] = target
+        }
+        return copied
+    }
+
+    private fun uniqueDarTarget(darsDir: Path, fileName: String): Path {
+        var candidate = darsDir.resolve(fileName)
+        var index = 2
+        while (Files.exists(candidate)) {
+            candidate = darsDir.resolve(fileName.removeSuffix(".dar") + "-$index.dar")
+            index++
+        }
+        return candidate
+    }
+
+    private fun clearDirectory(directory: Path) {
+        if (!Files.exists(directory)) return
+        Files.list(directory).use { paths ->
+            paths.forEach { path ->
+                if (Files.isDirectory(path)) {
+                    path.toFile().deleteRecursively()
+                } else {
+                    Files.deleteIfExists(path)
+                }
+            }
+        }
+    }
+
+    private fun writeGeneratedGitignore(root: Path) {
+        Files.writeString(root.resolve(".gitignore"), "data/\nlogs/\n*.log\n")
+    }
+
+    private fun scalaString(value: String): String =
+        value.replace("\\", "\\\\").replace("\"", "\\\"")
+
+    private fun shellQuote(value: String): String =
+        value.replace("\\", "\\\\").replace("\"", "\\\"").replace("$", "\\$")
+}

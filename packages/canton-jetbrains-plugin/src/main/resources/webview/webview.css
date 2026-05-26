@@ -640,7 +640,6 @@ body.empty .empty-message {
   font-size: 12px;
 }
 
-.role-stakeholder,
 .role-signatory,
 .role-observer {
   color: var(--daml-success);
@@ -659,13 +658,6 @@ body.empty .empty-message {
   color: var(--daml-danger);
   background: var(--daml-danger-soft);
   border-color: color-mix(in srgb, var(--daml-danger) 40%, var(--daml-border));
-}
-
-.role-field-operator,
-.role-field-depositor,
-.role-field-public,
-.role-field-vaultissuer {
-  color: var(--daml-fg-muted);
 }
 
 .party-0 { color: var(--daml-party-0); border-color: color-mix(in srgb, var(--daml-party-0) 42%, var(--daml-border)); }
@@ -1039,12 +1031,18 @@ body.empty .empty-message {
   color: var(--daml-fg-muted);
 }
 
-.disclosure-matrix .matrix-stakeholder {
+.disclosure-matrix .matrix-signatory,
+.disclosure-matrix .matrix-observer {
   background: color-mix(in srgb, var(--daml-success-soft) 72%, var(--daml-bg-panel));
 }
 
 .disclosure-matrix .matrix-divulged {
   background: color-mix(in srgb, var(--daml-danger-soft) 78%, var(--daml-bg-panel));
+}
+
+.disclosure-matrix .matrix-witness,
+.disclosure-matrix .matrix-disclosed {
+  background: color-mix(in srgb, var(--daml-warning-soft) 68%, var(--daml-bg-panel));
 }
 
 .disclosure-matrix .matrix-controller {

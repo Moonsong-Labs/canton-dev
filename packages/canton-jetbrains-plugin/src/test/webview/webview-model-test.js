@@ -32,31 +32,96 @@ assert.strictEqual(webview.classifySeverity('script completed'), 'info');
 assert.strictEqual(webview.formatDuration(3400), '3s');
 assert.strictEqual(webview.formatDuration(61000), '1m 01s');
 
-assert.strictEqual(webview.partyValueFromField('operator', "'operator-9b3970be'"), 'operator-9b3970be');
-assert.strictEqual(webview.partyValueFromField('vaultIssuer', "'vaultIssuer-d4d95138'"), 'vaultIssuer-d4d95138');
-assert.strictEqual(webview.partyValueFromField('depositConfigCid', '#3:0'), '');
-assert.strictEqual(webview.partyValueFromField('vaultId', '"v1"'), '');
 assert.strictEqual(webview.isDisclosureHeader('depositConfigCid'), false);
 assert.strictEqual(webview.isDisclosureHeader('operator'), false);
-assert.strictEqual(webview.isDisclosureHeader('operator-9b3970be'), true);
+assert.strictEqual(webview.isDisclosureHeader('operator-9b3970be'), false);
 assert.strictEqual(webview.looksLikePartyValue('#3:0'), false);
 assert.strictEqual(webview.looksLikePartyValue('"v1"'), false);
-assert.deepStrictEqual(webview.partyRoleLabels(['signatory', 'operator']), [
-  'signatory',
-  'stakeholder',
-  'field:operator'
-]);
-assert.deepStrictEqual(webview.partyRoleLabels(['observer']), ['observer', 'stakeholder']);
+assert.deepStrictEqual(webview.partyRoleLabels(['signatory']), ['signatory']);
+assert.deepStrictEqual(webview.partyRoleLabels(['observer']), ['observer']);
 assert.deepStrictEqual(webview.partyRoleLabels(['visible']), ['disclosed']);
 // Regression: partyChip used as a bare .map callback receives the array index as `roles`;
 // partyRoleLabels must tolerate a non-array argument instead of throwing and blanking the Tx Tree.
 assert.deepStrictEqual(webview.partyRoleLabels(1), []);
 assert.deepStrictEqual(webview.partyRoleLabels(undefined), []);
-assert.strictEqual(webview.roleDescription('field:operator'), 'Referenced by contract field operator');
-assert.strictEqual(webview.classifyDisclosureState(['signatory'], true).kind, 'stakeholder');
-assert.strictEqual(webview.classifyDisclosureState(['visible'], true).kind, 'divulged');
-assert.strictEqual(webview.classifyDisclosureState(['operator'], false).kind, 'field');
+assert.strictEqual(webview.classifyDisclosureState(['signatory'], true).kind, 'signatory');
+assert.strictEqual(webview.classifyDisclosureState(['observer'], true).kind, 'observer');
+assert.strictEqual(webview.classifyDisclosureState(['visible'], true).kind, 'disclosed');
+assert.strictEqual(webview.classifyDisclosureState(['divulged'], true).kind, 'divulged');
+assert.strictEqual(webview.classifyDisclosureState(['witness'], true).kind, 'witness');
+assert.strictEqual(webview.classifyDisclosureState(['operator'], false).kind, 'hidden');
 assert.strictEqual(webview.classifyDisclosureState([], false).kind, 'hidden');
+assert.deepStrictEqual(webview.partiesForContract([
+  { party: 'operator-9b3970be', visible: true, detail: 'Signatory' },
+  { party: 'public-40b5f04b', visible: true, detail: 'Divulged' },
+  { party: 'vaultIssuer-d4d95138', visible: false, detail: '' }
+]), [
+  { name: 'operator-9b3970be', roles: ['signatory'] },
+  { name: 'public-40b5f04b', roles: ['divulged'] }
+]);
+assert.deepStrictEqual(webview.disclosurePartiesForContracts([
+  {
+    fields: [{ name: 'public', value: "'public-40b5f04b'" }],
+    disclosures: [{ party: 'operator-9b3970be', visible: true, detail: 'Signatory' }]
+  },
+  {
+    fields: [{ name: 'vaultIssuer', value: "'vaultIssuer-d4d95138'" }],
+    disclosures: [
+      { party: 'valuationAgent-4f1df03a', visible: true, detail: 'Witness' },
+      { party: 'vaultIssuer-d4d95138', visible: false, detail: '' }
+    ]
+  }
+]), ['operator-9b3970be', 'valuationAgent-4f1df03a', 'vaultIssuer-d4d95138']);
+
+function fakeClassList(classes) {
+  return { contains: name => classes.includes(name) };
+}
+
+function fakeCell(text, classes, tooltip) {
+  return {
+    textContent: text,
+    classList: fakeClassList(classes || []),
+    querySelector: selector => selector === '.tooltiptext' && tooltip ? { textContent: tooltip } : null
+  };
+}
+
+function fakeRow(cells, classes) {
+  return {
+    classList: fakeClassList(classes || []),
+    querySelectorAll: () => cells
+  };
+}
+
+const multiRowContracts = webview.contractsFromHeadingAndTable(
+  { textContent: 'Vault.Holding:Holding@pkg', outerHTML: '<h1>Vault.Holding:Holding@pkg</h1>', querySelector: () => null },
+  {
+    classList: fakeClassList([]),
+    outerHTML: '<table></table>',
+    querySelector: () => null,
+    querySelectorAll: () => [
+      fakeRow([
+        fakeCell('id'), fakeCell('status'), fakeCell('issuer'),
+        fakeCell('operator-9b3970be', ['observer']),
+        fakeCell('public-40b5f04b', ['observer'])
+      ]),
+      fakeRow([
+        fakeCell('#11:0'), fakeCell('active'), fakeCell("'operator-9b3970be'"),
+        fakeCell('SSignatory', ['disclosure', 'disclosed'], 'Signatory'),
+        fakeCell('DDivulged', ['disclosure', 'disclosed'], 'Divulged')
+      ], ['active']),
+      fakeRow([
+        fakeCell('#12:0'), fakeCell('active'), fakeCell("'operator-9b3970be'"),
+        fakeCell('SSignatory', ['disclosure', 'disclosed'], 'Signatory'),
+        fakeCell('-', ['disclosure'])
+      ], ['active'])
+    ]
+  },
+  1
+);
+assert.strictEqual(multiRowContracts.length, 2);
+assert.deepStrictEqual(multiRowContracts.map(contract => contract.id), ['#11:0', '#12:0']);
+assert.strictEqual(multiRowContracts[0].disclosures.find(disclosure => disclosure.party === 'public-40b5f04b').detail, 'Divulged');
+assert.strictEqual(multiRowContracts[1].disclosures.find(disclosure => disclosure.party === 'public-40b5f04b').visible, false);
 assert.strictEqual(webview.synthesizeTransactionsFromContracts([
   { id: '#1:0', transactionId: '1', archived: false, templateShort: 'A', template: 'M:A', parties: [], fields: [] },
   { id: '#2:0', transactionId: '2', archived: true, templateShort: 'B', template: 'M:B', parties: [], fields: [] }

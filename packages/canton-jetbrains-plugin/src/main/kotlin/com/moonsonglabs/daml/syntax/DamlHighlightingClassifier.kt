@@ -8,11 +8,15 @@ object DamlHighlightingClassifier {
         DECLARATION_NAME,
         CHOICE_NAME,
         FIELD_NAME,
+        TYPE_REFERENCE,
+        PRELUDE_TYPE_REFERENCE,
         TYPE_PARAMETER,
         IMPORT_SYMBOL,
         SCRIPT_DECLARATION,
+        ABSTRACT_METHOD,
         BUILTIN,
         PARTY_NAME,
+        THIS_REFERENCE,
         PREDEFINED_VALUE
     }
 
@@ -40,11 +44,24 @@ object DamlHighlightingClassifier {
     private val partyBindingRegex = Regex(
         """(?m)^\s*([a-z_][A-Za-z0-9_']*)\s*<-\s*(?:allocateParty|allocatePartyWithHint)\b"""
     )
+    private val typedPartyBindingRegex = Regex(
+        """(?m)^\s*([a-z_][A-Za-z0-9_']*)\s*:\s*(?:Optional\s+|List\s+)?Party\b"""
+    )
+    private val abstractMethodRegex = Regex(
+        """^\s*([a-z_][A-Za-z0-9_']*)\s*:\s*.+"""
+    )
+    private val interfaceInstanceMethodRegex = Regex(
+        """^\s*([a-z_][A-Za-z0-9_']*)\b.*="""
+    )
     private val identifierRegex = Regex("""[A-Za-z_][A-Za-z0-9_']*""")
+    private val analysisCache = object : LinkedHashMap<CacheKey, Analysis>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<CacheKey, Analysis>?): Boolean = size > 32
+    }
 
     fun roleAt(fileText: String, tokenStart: Int, tokenText: String): Role? {
         if (tokenText.isEmpty() || tokenStart !in fileText.indices) return null
         if (!isIdentifier(tokenText)) return null
+        val analysis = analysis(fileText)
 
         val tokenEnd = tokenStart + tokenText.length
         val lineStart = fileText.lastIndexOf('\n', tokenStart - 1).let { if (it == -1) 0 else it + 1 }
@@ -80,15 +97,48 @@ object DamlHighlightingClassifier {
                 return Role.DECLARATION_NAME
             }
         }
+        interfaceInstanceMethodRegex.find(line)?.let { match ->
+            val methodName = match.groups[1]?.value
+            if (methodName != "view" &&
+                match.groupContains(1, lineOffset, tokenEndInLine) &&
+                isDirectInterfaceInstanceMember(fileText, lineStart, leadingIndent(line))
+            ) {
+                return Role.ABSTRACT_METHOD
+            }
+        }
+        abstractMethodRegex.find(line)?.let { match ->
+            if (match.groupContains(1, lineOffset, tokenEndInLine) &&
+                isDirectInterfaceOrClassMember(fileText, lineStart, leadingIndent(line))
+            ) {
+                return Role.ABSTRACT_METHOD
+            }
+        }
+
+        if (analysis.isAbstractMethodUse(tokenText, tokenStart, fileText, lineStart, leadingIndent(line))) {
+            return Role.ABSTRACT_METHOD
+        }
+
+        if (isPartyDeclaration(line, lineOffset, tokenEndInLine) ||
+            analysis.isPartyName(tokenText, tokenStart)
+        ) {
+            return Role.PARTY_NAME
+        }
+
+        if (tokenText == "this") return Role.THIS_REFERENCE
+        if (tokenText == "self") return Role.PREDEFINED_VALUE
 
         val localDeclarationRole = localDeclarationRole(line, lineOffset, tokenText)
         if (localDeclarationRole != null) return localDeclarationRole
 
-        if (tokenText in partyNames(fileText)) return Role.PARTY_NAME
-
-        if (tokenText == "self" || tokenText == "this") return Role.PREDEFINED_VALUE
-
         if (isTypeParameter(line, lineOffset, tokenText)) return Role.TYPE_PARAMETER
+
+        if (tokenText in DamlKeywords.preludeTypes && isTypeReferenceContext(line, lineOffset, tokenText)) {
+            return Role.PRELUDE_TYPE_REFERENCE
+        }
+
+        if (isTypeIdentifier(tokenText) && isTypeReferenceContext(line, lineOffset, tokenText)) {
+            return Role.TYPE_REFERENCE
+        }
 
         if (tokenText in DamlKeywords.builtins) return Role.BUILTIN
 
@@ -168,6 +218,39 @@ object DamlHighlightingClassifier {
         return false
     }
 
+    private fun isTypeReferenceContext(line: String, lineOffset: Int, tokenText: String): Boolean {
+        if (!isTypeIdentifier(tokenText)) return false
+
+        val before = line.substring(0, lineOffset)
+        val after = line.substring(lineOffset + tokenText.length)
+        val beforeTrimmed = before.trimEnd()
+        val afterTrimmed = after.trimStart()
+        val previousNonSpace = before.lastOrNull { !it.isWhitespace() }
+
+        if (previousNonSpace == '.' || previousNonSpace == '@') return true
+        if (afterTrimmed.startsWith(".")) return true
+        if (afterTrimmed.startsWith("with")) return true
+
+        val colon = line.indexOf(':')
+        if (colon != -1 && lineOffset > colon) return true
+
+        val doubleColon = line.indexOf("::")
+        if (doubleColon != -1 && lineOffset > doubleColon) return true
+
+        val typeArrow = listOf("->", "→", "=>", "⇒").any { beforeTrimmed.endsWith(it) }
+        if (typeArrow) return true
+
+        if (Regex("""\b(?:createCmd|createExactCmd|exerciseCmd|exerciseExactCmd|create|exercise|fetch|query)\s+$""")
+                .containsMatchIn(before)
+        ) {
+            return true
+        }
+
+        if (line.substring(0, lineOffset).contains(Regex("""\bderiving\s*\("""))) return true
+
+        return false
+    }
+
     private fun isInsideImportList(line: String, lineOffset: Int): Boolean {
         val open = line.indexOf('(')
         val close = line.lastIndexOf(')')
@@ -185,8 +268,208 @@ object DamlHighlightingClassifier {
 
     private fun isTypeIdentifier(text: String): Boolean = text.firstOrNull()?.isUpperCase() == true
 
-    private fun partyNames(fileText: String): Set<String> =
-        partyBindingRegex.findAll(fileText)
-            .mapNotNull { it.groups[1]?.value }
-            .toSet()
+    private fun analysis(fileText: String): Analysis {
+        val key = CacheKey(fileText.length, fileText.hashCode())
+        synchronized(analysisCache) {
+            analysisCache[key]?.let { return it }
+            val next = Analysis.build(fileText)
+            analysisCache[key] = next
+            return next
+        }
+    }
+
+    private fun abstractMethodNames(fileText: String): Set<String> {
+        val names = mutableSetOf<String>()
+        var lineStart = 0
+        while (lineStart <= fileText.length) {
+            val lineEnd = fileText.indexOf('\n', lineStart).let { if (it == -1) fileText.length else it }
+            val line = fileText.substring(lineStart, lineEnd)
+            val match = abstractMethodRegex.find(line)
+            if (match != null && isDirectInterfaceOrClassMember(fileText, lineStart, leadingIndent(line))) {
+                match.groups[1]?.value?.let(names::add)
+            }
+            if (lineEnd == fileText.length) break
+            lineStart = lineEnd + 1
+        }
+        return names
+    }
+
+    private fun isPartyDeclaration(line: String, start: Int, end: Int): Boolean =
+        sequenceOf(partyBindingRegex.find(line), typedPartyBindingRegex.find(line))
+            .filterNotNull()
+            .any { it.groupContains(1, start, end) }
+
+    private fun hasEnclosingInterfaceOrClass(fileText: String, lineStart: Int, currentIndent: Int): Boolean {
+        for (line in fileText.substring(0, lineStart).lines().asReversed()) {
+            val trimmed = line.trim()
+            if (trimmed.isEmpty() || trimmed.startsWith("--")) continue
+
+            val indent = leadingIndent(line)
+            if (indent >= currentIndent) continue
+            if (interfaceOrClassHeaderRegex.containsMatchIn(line)) return true
+            if (enclosingDeclarationRegex.containsMatchIn(line)) return false
+        }
+        return false
+    }
+
+    private fun isDirectInterfaceOrClassMember(fileText: String, lineStart: Int, currentIndent: Int): Boolean {
+        for (line in fileText.substring(0, lineStart).lines().asReversed()) {
+            val trimmed = line.trim()
+            if (trimmed.isEmpty() || trimmed.startsWith("--")) continue
+
+            val indent = leadingIndent(line)
+            if (indent >= currentIndent) continue
+
+            return Regex("""^\s*(?:interface|class)\s+[A-Z][A-Za-z0-9_']*(?:\s+[a-z_][A-Za-z0-9_']*)*\s+where\b""")
+                .containsMatchIn(line)
+        }
+        return false
+    }
+
+    private fun isDirectInterfaceInstanceMember(fileText: String, lineStart: Int, currentIndent: Int): Boolean {
+        for (line in fileText.substring(0, lineStart).lines().asReversed()) {
+            val trimmed = line.trim()
+            if (trimmed.isEmpty() || trimmed.startsWith("--")) continue
+
+            val indent = leadingIndent(line)
+            if (indent >= currentIndent) continue
+
+            return interfaceInstanceRegex.containsMatchIn(line)
+        }
+        return false
+    }
+
+    private fun leadingIndent(line: String): Int =
+        line.indexOfFirst { !it.isWhitespace() }.let { if (it == -1) line.length else it }
+
+    private data class CacheKey(val length: Int, val hash: Int)
+
+    private data class LineInfo(
+        val start: Int,
+        val end: Int,
+        val text: String,
+        val indent: Int
+    )
+
+    private data class NameScope(
+        val name: String,
+        val start: Int,
+        val end: Int
+    ) {
+        fun contains(name: String, offset: Int): Boolean =
+            this.name == name && offset in start until end
+    }
+
+    private data class Analysis(
+        val abstractMethods: Set<String>,
+        val partyScopes: List<NameScope>
+    ) {
+        fun isAbstractMethodUse(
+            tokenText: String,
+            tokenStart: Int,
+            fileText: String,
+            lineStart: Int,
+            lineIndent: Int
+        ): Boolean =
+            tokenText in abstractMethods &&
+                tokenStart >= 0 &&
+                hasEnclosingInterfaceOrClass(fileText, lineStart, lineIndent)
+
+        fun isPartyName(tokenText: String, tokenStart: Int): Boolean =
+            partyScopes.any { it.contains(tokenText, tokenStart) }
+
+        companion object {
+            fun build(fileText: String): Analysis {
+                val lines = lineInfos(fileText)
+                return Analysis(
+                    abstractMethods = abstractMethodNames(fileText),
+                    partyScopes = partyScopes(lines)
+                )
+            }
+
+            private fun lineInfos(fileText: String): List<LineInfo> {
+                val result = mutableListOf<LineInfo>()
+                var start = 0
+                while (start <= fileText.length) {
+                    val end = fileText.indexOf('\n', start).let { if (it == -1) fileText.length else it }
+                    val text = fileText.substring(start, end)
+                    result += LineInfo(start, end, text, leadingIndent(text))
+                    if (end == fileText.length) break
+                    start = end + 1
+                }
+                return result
+            }
+
+            private fun partyScopes(lines: List<LineInfo>): List<NameScope> {
+                val result = mutableListOf<NameScope>()
+                lines.forEachIndexed { index, line ->
+                    typedPartyBindingRegex.find(line.text)?.groups?.get(1)?.value?.let { name ->
+                        result += NameScope(name, enclosingScopeStart(lines, index), enclosingScopeEnd(lines, index))
+                    }
+                    partyBindingRegex.find(line.text)?.groups?.get(1)?.value?.let { name ->
+                        result += NameScope(name, line.start, localScopeEnd(lines, index))
+                    }
+                }
+                return result
+            }
+
+            private fun enclosingScopeStart(lines: List<LineInfo>, index: Int): Int {
+                val current = lines[index]
+                for (i in index - 1 downTo 0) {
+            val line = lines[i]
+            val trimmed = line.text.trim()
+            if (trimmed.isEmpty() || trimmed.startsWith("--")) continue
+            if (line.indent < current.indent &&
+                        scopeHeaderRegex.containsMatchIn(trimmed)
+                    ) {
+                        return line.start
+                    }
+                }
+                return current.start
+            }
+
+            private fun enclosingScopeEnd(lines: List<LineInfo>, index: Int): Int {
+                val scopeIndent = lines
+                    .take(index)
+                    .asReversed()
+                    .firstOrNull { line ->
+                        val trimmed = line.text.trim()
+                        trimmed.isNotEmpty() &&
+                            !trimmed.startsWith("--") &&
+                            line.indent < lines[index].indent &&
+                            scopeHeaderRegex.containsMatchIn(trimmed)
+                    }
+                    ?.indent
+                    ?: lines[index].indent
+                for (i in index + 1 until lines.size) {
+                    val line = lines[i]
+                    val trimmed = line.text.trim()
+                    if (trimmed.isEmpty() || trimmed.startsWith("--")) continue
+                    if (line.indent <= scopeIndent) return line.start
+                }
+                return lines.lastOrNull()?.end ?: lines[index].end
+            }
+
+            private fun localScopeEnd(lines: List<LineInfo>, index: Int): Int {
+                val indent = lines[index].indent
+                for (i in index + 1 until lines.size) {
+                    val line = lines[i]
+                    val trimmed = line.text.trim()
+                    if (trimmed.isEmpty() || trimmed.startsWith("--")) continue
+                    if (line.indent < indent) return line.start
+                }
+                return lines.lastOrNull()?.end ?: lines[index].end
+            }
+        }
+    }
+
+    private val interfaceOrClassHeaderRegex = Regex(
+        """^\s*(?:interface|class)\s+[A-Z][A-Za-z0-9_']*(?:\s+[a-z_][A-Za-z0-9_']*)*\s+where\b"""
+    )
+    private val enclosingDeclarationRegex = Regex(
+        """^\s*(?:template|data|newtype|type|exception)\s+[A-Z][A-Za-z0-9_']*\b"""
+    )
+    private val scopeHeaderRegex = Regex(
+        """^(?:template|interface|data|newtype|interface\s+instance|(?:nonconsuming|preconsuming|postconsuming)\s+choice|choice)\b"""
+    )
 }

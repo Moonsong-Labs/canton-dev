@@ -23,6 +23,7 @@ build/
 
 # Local development
 examples/
+packages/private-settlement/
 *.log
 .env
 .env.local

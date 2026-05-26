@@ -71,4 +71,20 @@ tasks {
         gradleVersion = "9.2.1"
         distributionType = Wrapper.DistributionType.BIN
     }
+
+    val intellijTest = named<Test>("test")
+    register<Test>("dockerIntegrationTest") {
+        group = "verification"
+        description = "Runs optional Docker-backed managed Canton sandbox integration checks."
+        testClassesDirs = intellijTest.get().testClassesDirs
+        classpath = intellijTest.get().classpath
+        include("**/SandboxDockerIntegrationTest.class")
+        shouldRunAfter(intellijTest)
+        onlyIf {
+            providers.gradleProperty("runDockerIntegration").orNull == "true" ||
+                System.getenv("RUN_DOCKER_INTEGRATION") == "true"
+        }
+        systemProperty("runDockerIntegration", "true")
+        systemProperty("cantonDockerImage", System.getenv("CANTON_DOCKER_IMAGE") ?: "canton-jetbrains-dev:latest")
+    }
 }

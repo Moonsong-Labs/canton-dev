@@ -21,6 +21,7 @@ import com.moonsonglabs.daml.settings.DamlProjectSettings
 import com.moonsonglabs.daml.workspace.DamlWorkspaceService
 import org.jdom.Element
 import java.nio.charset.StandardCharsets
+import java.nio.file.Files
 import java.nio.file.Path
 
 class CantonRunConfiguration(
@@ -54,7 +55,11 @@ class CantonRunConfiguration(
     fun buildCommandLine(): List<String> {
         val settings = DamlProjectSettings.getInstance(project)
         val binary = settings.cantonBinaryPath.takeIf { it.isNotBlank() } ?: "canton"
-        val args = mutableListOf(binary)
+        val args = if (binary.endsWith(".jar")) {
+            mutableListOf(javaExecutable(), "-jar", binary)
+        } else {
+            mutableListOf(binary)
+        }
         args += CommandLineWords.split(settings.cantonExtraArguments)
         when (mode) {
             CantonMode.CONFIG -> {
@@ -68,6 +73,13 @@ class CantonRunConfiguration(
         }
         args += CommandLineWords.split(extraArguments)
         return args
+    }
+
+    private fun javaExecutable(): String {
+        val javaHome = System.getProperty("java.home")?.takeIf { it.isNotBlank() }
+        val executable = if (System.getProperty("os.name").startsWith("Windows", true)) "java.exe" else "java"
+        val candidate = javaHome?.let { Path.of(it, "bin", executable) }
+        return candidate?.takeIf(Files::isExecutable)?.toString() ?: "java"
     }
 
     fun resolveWorkspace(): Path {

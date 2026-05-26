@@ -151,6 +151,8 @@ object DamlKeywords {
         "date", "datetime", "time", "subTime", "wholeDays",
         "optional", "fromOptional", "fromSome", "fromSomeNote", "isNone", "isSome",
         "createCmd", "createExactCmd", "exerciseCmd", "exerciseExactCmd",
+        "exerciseInterface", "exerciseInterfaceCmd",
+        "exerciseByKeyInterface", "exerciseByKeyInterfaceCmd",
         "exerciseByKeyCmd", "exerciseByKeyExactCmd", "createAndExerciseCmd",
         "createAndExerciseExactCmd", "createAndExerciseWithCidCmd",
         "createAndExerciseWithCidExactCmd", "archiveCmd",

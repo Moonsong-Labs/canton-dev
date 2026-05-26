@@ -87,9 +87,27 @@
                                       implementationClass="com.redhat.devtools.lsp4ij.features.documentSymbol.LSPDocumentSymbolStructureViewFactory"/>
 
         <psi.referenceContributor language="DAML"
-                                  implementation="com.moonsonglabs.daml.navigation.DamlModuleReferenceContributor"/>
+                                  implementation="com.moonsonglabs.daml.navigation.DamlModuleReferenceContributor"
+                                  order="first"/>
 
-        <gotoDeclarationHandler implementation="com.moonsonglabs.daml.navigation.DamlGotoDeclarationHandler"/>
+        <psi.referenceContributor language="DAML"
+                                  implementation="com.moonsonglabs.daml.navigation.DamlChoiceReferenceContributor"/>
+
+        <referencesSearch implementation="com.moonsonglabs.daml.navigation.DamlChoiceReferencesSearch"/>
+
+        <findUsagesHandlerFactory implementation="com.moonsonglabs.daml.navigation.DamlChoiceFindUsagesHandlerFactory"
+                                  order="first"/>
+        <usageTargetProvider implementation="com.moonsonglabs.daml.navigation.DamlChoiceUsageTargetProvider"
+                             order="first"/>
+
+        <lang.findUsagesProvider language="DAML"
+                                 implementationClass="com.moonsonglabs.daml.navigation.DamlFindUsagesProvider"/>
+
+        <gotoDeclarationHandler implementation="com.moonsonglabs.daml.navigation.DamlGotoDeclarationHandler"
+                                order="first"/>
+
+        <lang.directNavigationProvider implementation="com.moonsonglabs.daml.navigation.DamlDirectNavigationProvider"
+                                       order="first"/>
 
         <codeInsight.lineMarkerProvider language="DAML"
                                         implementationClass="com.moonsonglabs.daml.scriptresults.DamlScriptLineMarkerProvider"/>
@@ -107,12 +125,19 @@
 
 	        <colorSettingsPage implementation="com.moonsonglabs.daml.syntax.DamlColorSettingsPage"/>
 
-        <toolWindow id="DAML Script Results"
-                    anchor="bottom"
-                    factoryClass="com.moonsonglabs.daml.scriptresults.ScriptResultsToolWindowFactory"
-                    icon="com.moonsonglabs.daml.DamlIcons.ToolWindow"/>
+	        <toolWindow id="DAML Script Results"
+	                    anchor="bottom"
+	                    factoryClass="com.moonsonglabs.daml.scriptresults.ScriptResultsToolWindowFactory"
+	                    icon="com.moonsonglabs.daml.DamlIcons.ToolWindow"/>
+
+	        <toolWindow id="Managed Canton Sandboxes"
+	                    anchor="right"
+	                    factoryClass="com.moonsonglabs.daml.sandbox.CantonSandboxToolWindowFactory"
+	                    icon="com.moonsonglabs.daml.DamlIcons.ToolWindow"/>
 
 	        <notificationGroup id="DAML" displayType="BALLOON"/>
+
+	        <directoryIndexExcludePolicy implementation="com.moonsonglabs.daml.workspace.DamlDirectoryExcludePolicy"/>
 
 	        <postStartupActivity implementation="com.moonsonglabs.daml.DamlStartupActivity"/>
 

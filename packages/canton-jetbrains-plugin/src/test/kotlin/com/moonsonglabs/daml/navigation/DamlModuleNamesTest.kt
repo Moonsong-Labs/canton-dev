@@ -37,6 +37,43 @@ class DamlModuleNamesTest {
     }
 
     @Test
+    fun `parses import declarations with aliases and explicit symbols`() {
+        val text = """
+import qualified Vault.Vault as V
+import Vault.Component.KYCPolicy (IKYCPolicy, VKYCPolicy(..))
+""".trimIndent()
+
+        val imports = DamlModuleNames.imports(text)
+
+        assertEquals("Vault.Vault", imports[0].moduleName)
+        assertEquals(true, imports[0].qualified)
+        assertEquals("V", imports[0].alias)
+        assertEquals(setOf("IKYCPolicy", "VKYCPolicy"), imports[1].symbols)
+    }
+
+    @Test
+    fun `parses qualified source symbol references`() {
+        val text = "submit operator ${'$'} exerciseCmd vault0 V.RouteDeposit with depositor"
+        val routeDeposit = DamlModuleNames.symbolAt(text, text.indexOf("RouteDeposit"))!!
+
+        assertEquals("RouteDeposit", routeDeposit.name)
+        assertEquals("V", routeDeposit.qualifier)
+        assertEquals(text.indexOf("RouteDeposit"), routeDeposit.startOffset)
+        assertNull(DamlModuleNames.symbolAt(text, text.indexOf("V.RouteDeposit")))
+    }
+
+    @Test
+    fun `parses type application symbol from at marker or type offset`() {
+        val text = "mandateCid = toInterfaceContractId @IMandate manRaw"
+
+        val atOffset = text.indexOf("@IMandate")
+        val typeOffset = text.indexOf("IMandate")
+
+        assertEquals("IMandate", DamlModuleNames.symbolAtOrNear(text, atOffset)!!.name)
+        assertEquals("IMandate", DamlModuleNames.symbolAtOrNear(text, typeOffset)!!.name)
+    }
+
+    @Test
     fun `finds interface declaration`() {
         val text = """
 module Vault.Deposit.Processor where

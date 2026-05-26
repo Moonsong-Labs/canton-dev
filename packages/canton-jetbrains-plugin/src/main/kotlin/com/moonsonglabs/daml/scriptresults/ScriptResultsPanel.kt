@@ -22,6 +22,7 @@ import java.awt.BorderLayout
 import java.awt.Color
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
+import java.nio.file.Paths
 import java.util.Base64
 import javax.swing.JLabel
 import javax.swing.JPanel
@@ -94,6 +95,7 @@ class ScriptResultsPanel(private val project: Project) : JPanel(BorderLayout()),
     fun setHtml(html: String) {
         if (browser == null) return
         latestHtml = html
+        pendingNotes.clear()
         if (webviewReady) dispatchHtml(html)
     }
 
@@ -110,6 +112,16 @@ class ScriptResultsPanel(private val project: Project) : JPanel(BorderLayout()),
         if (browser == null) return
         latestProgress = millisecondsPassed
         if (webviewReady) dispatchProgress(millisecondsPassed)
+    }
+
+    fun clearResource() {
+        latestHtml = null
+        latestProgress = null
+        pendingNotes.clear()
+        if (webviewReady) {
+            dispatchHtml("")
+            dispatchProgress(-1)
+        }
     }
 
     private fun loadInitialHtml() {
@@ -208,6 +220,7 @@ class ScriptResultsPanel(private val project: Project) : JPanel(BorderLayout()),
     private fun revealLocation(commandUri: String?) {
         val args = parseRevealLocationArgs(commandUri) ?: return
         val file = VirtualFileManager.getInstance().findFileByUrl(args.uri) ?: return
+        if (!isRevealTargetAllowed(file)) return
         ApplicationManager.getApplication().invokeLater {
             val line = args.startLine.coerceAtLeast(0)
             val editor = FileEditorManager.getInstance(project).openTextEditor(
@@ -224,6 +237,15 @@ class ScriptResultsPanel(private val project: Project) : JPanel(BorderLayout()),
                 editor.scrollingModel.scrollToCaret(ScrollType.CENTER)
             }
         }
+    }
+
+    private fun isRevealTargetAllowed(file: com.intellij.openapi.vfs.VirtualFile): Boolean {
+        if (file.extension != "daml") return false
+        if (file.path.split('/').any { it == ".daml" }) return false
+        val basePath = project.basePath ?: return true
+        val base = Paths.get(basePath).normalize()
+        val target = runCatching { file.toNioPath().normalize() }.getOrNull() ?: return false
+        return target.startsWith(base)
     }
 
     private fun parseRevealLocationArgs(commandUri: String?): RevealLocationArgs? {

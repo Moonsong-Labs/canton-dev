@@ -38,6 +38,7 @@ class VirtualResourceManager(private val project: Project) : Disposable {
     fun update(uri: String, html: String) {
         resources.computeIfAbsent(uri) { Resource() }.apply {
             this.html = html
+            notes = emptyList()
             progressMs = -1
         }
         applyOnEdt(uri) { panel ->
@@ -82,6 +83,9 @@ class VirtualResourceManager(private val project: Project) : Disposable {
                 if (it.html.isNotEmpty()) panel.setHtml(it.html)
                 it.notes.forEach(panel::setNote)
                 panel.setProgress(it.progressMs)
+            } ?: run {
+                panel.clearResource()
+                panel.setProgress(-1)
             }
         }
     }
@@ -138,6 +142,7 @@ class VirtualResourceManager(private val project: Project) : Disposable {
 
     private fun applyOnEdt(uri: String, block: (ScriptResultsPanel) -> Unit) {
         ApplicationManager.getApplication().invokeLater {
+            if (activeUri != uri) return@invokeLater
             val tw = toolWindow() ?: return@invokeLater
             if (!tw.isVisible) tw.show()
             val panel = panelOf(tw) ?: return@invokeLater

@@ -26,7 +26,7 @@ class DamlSettingsComponent(private val project: Project) {
                 title = "DAML Binary"
                 description = DamlBundle.message("daml.settings.binaryPath.tooltip")
             }
-            val chosen = FileChooser.chooseFile(descriptor, null, null)
+            val chosen = FileChooser.chooseFile(descriptor, project, null)
             if (chosen != null) text = chosen.path
         }
     }
@@ -38,7 +38,7 @@ class DamlSettingsComponent(private val project: Project) {
                 title = "Canton Binary"
                 description = DamlBundle.message("daml.settings.cantonBinaryPath.tooltip")
             }
-            val chosen = FileChooser.chooseFile(descriptor, null, null)
+            val chosen = FileChooser.chooseFile(descriptor, project, null)
             if (chosen != null) text = chosen.path
         }
     }
@@ -114,10 +114,8 @@ class DamlSettingsComponent(private val project: Project) {
         .addComponent(dpmPanel, 1)
         .addLabeledComponent(DamlBundle.message("daml.settings.logLevel.label"), logLevelCombo, 1, false)
         .addLabeledComponent(DamlBundle.message("daml.settings.telemetry.label"), telemetryCombo, 1, false)
-        .addComponent(autorunCheckbox, 1)
         .addLabeledComponent(DamlBundle.message("daml.settings.extraArguments.label"), extraArgsField, 1, false)
         .addLabeledComponent(DamlBundle.message("daml.settings.cantonExtraArguments.label"), cantonExtraArgsField, 1, false)
-        .addComponent(multiPackageCheckbox, 1)
         .addComponentFillVertically(JPanel(), 0)
         .panel
 

@@ -41,6 +41,23 @@ template Deposit
     }
 
     @Test
+    fun `classifies native type after multiline template with clause`() {
+        val tokens = lex(
+            """
+template VaultFactory
+  with
+    vaultIssuer : Party
+  where
+    signatory vaultIssuer
+""".trimIndent()
+        )
+
+        assertHas(tokens, "VaultFactory", DamlTokenTypes.TYPE_NAME)
+        assertHas(tokens, "vaultIssuer", DamlTokenTypes.IDENTIFIER)
+        assertHas(tokens, "Party", DamlTokenTypes.PRELUDE_TYPE)
+    }
+
+    @Test
     fun `classifies script and interface helpers as builtins`() {
         val tokens = lex(
             """

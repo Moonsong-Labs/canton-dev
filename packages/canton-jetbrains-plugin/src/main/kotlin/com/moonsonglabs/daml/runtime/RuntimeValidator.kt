@@ -91,6 +91,9 @@ class RuntimeValidator(private val project: Project) {
     ): ToolCheck {
         override?.let {
             val path = Path.of(it)
+            if (name == "canton" && path.toString().endsWith(".jar") && Files.isRegularFile(path)) {
+                return ToolCheck(name, true, path.toString())
+            }
             return if (Files.isExecutable(path)) {
                 ToolCheck(name, true, path.toString())
             } else {
