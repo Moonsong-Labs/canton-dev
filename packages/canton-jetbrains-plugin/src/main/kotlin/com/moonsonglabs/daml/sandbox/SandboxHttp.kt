@@ -9,7 +9,8 @@ import java.time.Duration
 data class SandboxHttpResponse(
     val status: Int,
     val body: String,
-    val headers: Map<String, List<String>>
+    val headers: Map<String, List<String>>,
+    val durationMillis: Long = 0
 )
 
 class JsonApiClient {
@@ -36,8 +37,10 @@ class JsonApiClient {
             builder.header("Content-Type", "application/json")
             builder.method(normalizedMethod, HttpRequest.BodyPublishers.ofString(body.orEmpty()))
         }
+        val started = System.nanoTime()
         val response = client.send(builder.build(), HttpResponse.BodyHandlers.ofString())
-        return SandboxHttpResponse(response.statusCode(), response.body(), response.headers().map())
+        val durationMillis = (System.nanoTime() - started) / 1_000_000
+        return SandboxHttpResponse(response.statusCode(), response.body(), response.headers().map(), durationMillis)
     }
 }
 

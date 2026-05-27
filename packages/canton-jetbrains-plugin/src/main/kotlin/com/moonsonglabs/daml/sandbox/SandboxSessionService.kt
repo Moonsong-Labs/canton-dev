@@ -115,6 +115,13 @@ class SandboxSessionService(private val project: Project) : Disposable {
     fun runJsonRequest(endpoint: Endpoint, method: String, path: String, token: String?, body: String?): SandboxHttpResponse =
         JsonApiClient().request(method, endpoint.url, path, token, body)
 
+    internal fun runSynchronizerDiagnostic(
+        profile: SandboxProfile,
+        sync: SynchronizerNode,
+        preset: SyncDiagnosticPreset
+    ): SyncDiagnosticResponse =
+        SyncDomainDiagnosticRunner(project).run(profile, sync, preset)
+
     fun fetchLedgerSnapshot(profile: SandboxProfile, participantName: String, token: String?): LedgerExplorerSnapshot {
         val participant = profile.participants.firstOrNull { it.name == participantName }
             ?: throw ExecutionException("Participant $participantName is not part of profile ${profile.name}.")

@@ -95,6 +95,33 @@ class CantonSandboxPanelTest : BasePlatformTestCase() {
         }
     }
 
+    fun `test network toolbar shows session status`() {
+        val panel = CantonSandboxPanel(project)
+
+        try {
+            val statusBadge = panel.privateField<JLabel>("networkStatusBadge")
+
+            assertEquals("Status: Stopped", statusBadge.text)
+            assertEquals(networkStatusColor(SandboxSessionStatus.STOPPED), statusBadge.foreground)
+
+            panel.privateMethod("renderSession", SandboxSessionState::class.java)
+                .invoke(
+                    panel,
+                    SandboxSessionState(
+                        profileId = panel.privateField<SandboxProfile>("currentProfile").id,
+                        status = SandboxSessionStatus.RUNNING,
+                        message = "Sandbox ready"
+                    )
+                )
+
+            assertEquals("Status: Running", statusBadge.text)
+            assertEquals(networkStatusColor(SandboxSessionStatus.RUNNING), statusBadge.foreground)
+            assertEquals("Sandbox ready", statusBadge.toolTipText)
+        } finally {
+            panel.dispose()
+        }
+    }
+
     fun `test network renderers map participants syncs connections and dar warnings`() {
         val panel = CantonSandboxPanel(project)
 

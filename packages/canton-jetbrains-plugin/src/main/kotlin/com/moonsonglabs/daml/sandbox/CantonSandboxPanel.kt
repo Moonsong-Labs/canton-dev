@@ -71,6 +71,7 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
 
     private val profileComboModel = DefaultComboBoxModel<SandboxProfile>()
     private val profileCombo = ProfileComboBox(profileComboModel) { deleteProfile(it) }
+    private val networkStatusBadge = JLabel()
     private val nameField = JBTextField()
     private val portBaseField = JBTextField()
 
@@ -85,6 +86,8 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
     private val connectionTable = table(connectionModel)
     private val darTable = table(darModel)
     private val partyTable = table(partyModel)
+    private val participantEndpointConsole = ParticipantEndpointConsole(project, sessions)
+    private val syncDomainEndpointConsole = SyncDomainEndpointConsole(project, sessions)
     private val darParticipantList = JBList(DefaultListModel<String>()).apply {
         selectionMode = ListSelectionModel.MULTIPLE_INTERVAL_SELECTION
     }
@@ -149,6 +152,7 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
         }
 
         panel.add(row(
+            networkStatusBadge,
             networkLabel("Profile"),
             profileCombo,
             button("New", AllIcons.General.Add) { loadProfile(profiles.createProfile()) },
@@ -271,11 +275,39 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
 
     private fun nodesTab(): JComponent {
         val tabs = styledTabbedPane()
-        tabs.addTab("Participants", networkCard(themedScrollPane(participantTable)))
-        tabs.addTab("Sync Domains", networkCard(themedScrollPane(syncTable)))
+        tabs.addTab("Participants", participantsNodeTab())
+        tabs.addTab("Sync Domains", syncDomainsNodeTab())
         tabs.addTab("Connections", networkCard(themedScrollPane(connectionTable)))
         return networkSurface(tabs)
     }
+
+    private fun participantsNodeTab(): JComponent =
+        JSplitPane(JSplitPane.HORIZONTAL_SPLIT, networkCard(themedScrollPane(participantTable)).apply {
+            preferredSize = Dimension(380, 100)
+            minimumSize = Dimension(280, 80)
+        }, participantEndpointConsole).apply {
+            ui = TopologySplitPaneUI()
+            resizeWeight = 0.0
+            dividerLocation = 380
+            dividerSize = 8
+            isContinuousLayout = true
+            border = BorderFactory.createEmptyBorder()
+            background = TopologyGraphTheme.canvas
+        }
+
+    private fun syncDomainsNodeTab(): JComponent =
+        JSplitPane(JSplitPane.HORIZONTAL_SPLIT, networkCard(themedScrollPane(syncTable)).apply {
+            preferredSize = Dimension(440, 100)
+            minimumSize = Dimension(320, 80)
+        }, syncDomainEndpointConsole).apply {
+            ui = TopologySplitPaneUI()
+            resizeWeight = 0.0
+            dividerLocation = 440
+            dividerSize = 8
+            isContinuousLayout = true
+            border = BorderFactory.createEmptyBorder()
+            background = TopologyGraphTheme.canvas
+        }
 
     private fun darsTab(): JComponent {
         val panel = networkPanel(BorderLayout(8, 8))
@@ -722,6 +754,7 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
             withoutTableNavigation {
                 participantTable.selectionModel.setSelectionInterval(index, index)
             }
+            updateParticipantEndpointConsole()
         }
     }
 
@@ -825,9 +858,19 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
     private fun renderProfileTables() {
         reset(participantModel)
         currentProfile.participants.forEach { participantModel.addRow(rowData(it.name, it.ledgerPort, it.adminPort, it.jsonPort)) }
+        if (participantTable.rowCount > 0 && participantTable.selectedRow < 0) {
+            withoutTableNavigation {
+                participantTable.selectionModel.setSelectionInterval(0, 0)
+            }
+        }
         reset(syncModel)
         currentProfile.synchronizers.forEach {
             syncModel.addRow(rowData(it.name, it.sequencer.name, it.sequencer.publicPort, it.sequencer.adminPort, it.mediator.name, it.mediator.adminPort))
+        }
+        if (syncTable.rowCount > 0 && syncTable.selectedRow < 0) {
+            withoutTableNavigation {
+                syncTable.selectionModel.setSelectionInterval(0, 0)
+            }
         }
         reset(connectionModel)
         currentProfile.bindings.forEach {
@@ -842,6 +885,24 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
         renderPalette()
         refreshDarParticipantList()
         refreshPartyCombos()
+        updateParticipantEndpointConsole()
+        updateSyncDomainEndpointConsole()
+    }
+
+    private fun selectedParticipantId(): String? =
+        currentProfile.participants.getOrNull(participantTable.selectedRow)?.id
+            ?: currentProfile.participants.firstOrNull()?.id
+
+    private fun selectedSyncId(): String? =
+        currentProfile.synchronizers.getOrNull(syncTable.selectedRow)?.id
+            ?: currentProfile.synchronizers.firstOrNull()?.id
+
+    private fun updateParticipantEndpointConsole() {
+        participantEndpointConsole.setContext(currentProfile, latestSession, selectedParticipantId())
+    }
+
+    private fun updateSyncDomainEndpointConsole() {
+        syncDomainEndpointConsole.setContext(currentProfile, latestSession, selectedSyncId())
     }
 
     private fun renderPalette() {
@@ -895,12 +956,29 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
         } else {
             state.copy(status = SandboxSessionStatus.STOPPED, health = emptyList(), message = "No running session for this profile")
         }
+        renderNetworkStatus(effectiveState)
         graph.setRuntimeState(
             effectiveState.status,
             effectiveState.health,
             if (belongsToCurrentProfile) state.log.hashCode() else 0
         )
+        updateParticipantEndpointConsole()
+        updateSyncDomainEndpointConsole()
         renderInspector(currentTopologySelection)
+    }
+
+    private fun renderNetworkStatus(state: SandboxSessionState) {
+        val color = networkStatusColor(state.status)
+        networkStatusBadge.text = "Status: ${state.status.presentableName}"
+        networkStatusBadge.foreground = color
+        networkStatusBadge.background = TopologyGraphTheme.panel
+        networkStatusBadge.font = networkStatusBadge.font.deriveFont(Font.BOLD, 12f)
+        networkStatusBadge.isOpaque = true
+        networkStatusBadge.border = BorderFactory.createCompoundBorder(
+            NetworkRoundBorder(color, 12),
+            JBUI.Borders.empty(5, 12)
+        )
+        networkStatusBadge.toolTipText = state.message.ifBlank { state.status.presentableName }
     }
 
     private fun renderInspector(selection: TopologyGraphPanel.Selection?) {
@@ -948,16 +1026,22 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
 
     private fun wireTableNavigation() {
         participantTable.selectionModel.addListSelectionListener {
-            if (!it.valueIsAdjusting && !suppressTableNavigation) {
-                currentProfile.participants.getOrNull(participantTable.selectedRow)?.let { participant ->
-                    selectTopology(TopologyGraphPanel.Selection.Participant(participant.id))
+            if (!it.valueIsAdjusting) {
+                updateParticipantEndpointConsole()
+                if (!suppressTableNavigation) {
+                    currentProfile.participants.getOrNull(participantTable.selectedRow)?.let { participant ->
+                        selectTopology(TopologyGraphPanel.Selection.Participant(participant.id))
+                    }
                 }
             }
         }
         syncTable.selectionModel.addListSelectionListener {
-            if (!it.valueIsAdjusting && !suppressTableNavigation) {
-                currentProfile.synchronizers.getOrNull(syncTable.selectedRow)?.let { sync ->
-                    selectTopology(TopologyGraphPanel.Selection.Synchronizer(sync.id))
+            if (!it.valueIsAdjusting) {
+                updateSyncDomainEndpointConsole()
+                if (!suppressTableNavigation) {
+                    currentProfile.synchronizers.getOrNull(syncTable.selectedRow)?.let { sync ->
+                        selectTopology(TopologyGraphPanel.Selection.Synchronizer(sync.id))
+                    }
                 }
             }
         }
@@ -1221,6 +1305,16 @@ internal fun networkConnectionColor(connected: Boolean): Color =
 internal fun networkDarInspectColor(inspect: String): Color =
     if (inspect.equals("ok", ignoreCase = true)) TopologyGraphTheme.syncBorder else TopologyGraphTheme.warning
 
+internal fun networkStatusColor(status: SandboxSessionStatus): Color =
+    when (status) {
+        SandboxSessionStatus.RUNNING -> TopologyGraphTheme.syncBorder
+        SandboxSessionStatus.STARTING,
+        SandboxSessionStatus.GENERATING,
+        SandboxSessionStatus.STOPPING -> TopologyGraphTheme.warning
+        SandboxSessionStatus.FAILED -> Color(0xFF5C7A)
+        SandboxSessionStatus.STOPPED -> Color(0xFF6D86)
+    }
+
 internal fun networkLogLineColor(line: String): Color {
     val lower = line.lowercase()
     return when {
@@ -1231,7 +1325,7 @@ internal fun networkLogLineColor(line: String): Color {
     }
 }
 
-private fun networkAlpha(color: Color, alpha: Int): Color =
+internal fun networkAlpha(color: Color, alpha: Int): Color =
     Color(color.red, color.green, color.blue, alpha.coerceIn(0, 255))
 
 private class NetworkTableHeaderRenderer(
