@@ -135,7 +135,8 @@ class SandboxLedgerExplorer(private val client: JsonApiClient = JsonApiClient())
         val root = JsonParser.parseString(body).asArrayOrNull() ?: return emptyList()
         return root.mapNotNull { entry ->
             val active = entry.asJsonObject.obj("contractEntry")?.obj("JsActiveContract") ?: return@mapNotNull null
-            val created = active.obj("createdEvent") ?: return@mapNotNull null
+            val createdEnvelope = active.obj("createdEvent") ?: return@mapNotNull null
+            val created = createdEnvelope.obj("CreatedEvent") ?: createdEnvelope
             parseCreatedContract(created, active.string("synchronizerId"), gson.toJson(created))
         }
     }

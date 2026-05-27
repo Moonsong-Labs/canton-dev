@@ -4,7 +4,11 @@ import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.table.JBTable
+import java.awt.Container
+import java.awt.event.MouseEvent
 import javax.swing.DefaultListModel
+import javax.swing.JLabel
+import javax.swing.JPanel
 import javax.swing.SwingUtilities
 import javax.swing.table.DefaultTableModel
 
@@ -72,6 +76,37 @@ class LedgerExplorerPanelTest : BasePlatformTestCase() {
             panel.applyFilters()
 
             assertTrue(panel.privateField<JBTextArea>("detailsArea").text.contains("Sandbox not running"))
+        } finally {
+            panel.dispose()
+        }
+    }
+
+    fun `test filter sidebar is collapsed by default`() {
+        val panel = LedgerExplorerPanel(project, SandboxSessionService.getInstance(project)) {}
+
+        try {
+            panel.setProfile(SandboxDefaults.newProfile(null))
+
+            assertFalse(panel.privateField<Boolean>("sidebarExpanded"))
+        } finally {
+            panel.dispose()
+        }
+    }
+
+    fun `test expanded sidebar omits duplicated category headers`() {
+        val panel = LedgerExplorerPanel(project, SandboxSessionService.getInstance(project)) {}
+
+        try {
+            val profile = SandboxDefaults.newProfile(null)
+            panel.setProfile(profile)
+            panel.privateSet("sidebarExpanded", true)
+            panel.privateMethod("updateSidebar").invoke(panel)
+
+            val sidebar = panel.privateField<JPanel>("sidebarSlot")
+            assertTrue(sidebar.containsLabel("Filters"))
+            assertFalse(sidebar.containsLabel("Participants"))
+            assertFalse(sidebar.containsLabel("Sync Domains"))
+            assertFalse(sidebar.containsLabel("Parties"))
         } finally {
             panel.dispose()
         }
@@ -161,14 +196,39 @@ class LedgerExplorerPanelTest : BasePlatformTestCase() {
         }
     }
 
-    private fun activityRow(kind: String = "Active", contractId: String = "00active"): ExplorerActivityRow =
+    fun `test timeline hover describes event and click selects table row`() {
+        val panel = LedgerExplorerPanel(project, SandboxSessionService.getInstance(project)) {}
+
+        try {
+            panel.setProfile(SandboxDefaults.newProfile(null))
+            panel.privateSet("selectedSegment", "History")
+            panel.privateField<JBList<String>>("partyList").clearSelection()
+            val created = activityRow(kind = "Created", contractId = "00created", offset = 6)
+            val archived = activityRow(kind = "Archived", contractId = "00archived", offset = 7)
+            panel.privateSet("allRows", listOf(created, archived))
+
+            panel.applyFilters()
+            val timeline = panel.privateField<NetworkActivityTimelinePanel>("timeline")
+            timeline.setSize(1000, 126)
+            val point = timeline.markerCenterForTest(created)!!
+
+            assertTrue(timeline.hoverDescriptionForTest(point.x, point.y)!!.contains("Created PublicSettlement"))
+            timeline.dispatchEvent(MouseEvent(timeline, MouseEvent.MOUSE_CLICKED, System.currentTimeMillis(), 0, point.x, point.y, 1, false))
+
+            assertTrue(panel.privateField<JBTextArea>("detailsArea").text.contains("00created"))
+        } finally {
+            panel.dispose()
+        }
+    }
+
+    private fun activityRow(kind: String = "Active", contractId: String = "00active", offset: Long = 5): ExplorerActivityRow =
         ExplorerActivityRow(
             kind = kind,
             templateId = "pkg:PrivateSettlement:PublicSettlement",
             templateName = "PublicSettlement",
             contractId = contractId,
-            offset = 5,
-            offsetText = "5",
+            offset = offset,
+            offsetText = offset.toString(),
             synchronizerId = "global::abc",
             syncName = "global",
             packageName = "private-settlement",
@@ -194,7 +254,19 @@ class LedgerExplorerPanelTest : BasePlatformTestCase() {
         javaClass.getMethod("setSelected", java.lang.Boolean.TYPE).invoke(this, value)
     }
 
+    private fun Any.privateMethod(name: String, vararg parameterTypes: Class<*>): java.lang.reflect.Method {
+        val method = javaClass.getDeclaredMethod(name, *parameterTypes)
+        method.isAccessible = true
+        return method
+    }
+
     private fun flushEdt() {
         if (!SwingUtilities.isEventDispatchThread()) SwingUtilities.invokeAndWait {}
     }
+
+    private fun Container.containsLabel(text: String): Boolean =
+        components.any { component ->
+            (component is JLabel && component.text == text) ||
+                (component is Container && component.containsLabel(text))
+        }
 }

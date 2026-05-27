@@ -95,4 +95,34 @@ class SandboxLedgerExplorerTest {
         assertEquals("Archived", events.single().kind)
         assertEquals("PrivateOffer", events.single().templateName)
     }
+
+    @Test
+    fun `parses active contracts when created event is wrapped`() {
+        val active = explorer.parseActiveContracts(
+            """
+            [
+              {
+                "contractEntry": {
+                  "JsActiveContract": {
+                    "synchronizerId": "global::abc",
+                    "createdEvent": {
+                      "CreatedEvent": {
+                        "offset": 55,
+                        "contractId": "00wrapped",
+                        "templateId": "pkg:PrivateSettlement:PrivateOffer",
+                        "packageName": "private-settlement-bridge",
+                        "witnessParties": ["IssuerPrivate::party"]
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+            """.trimIndent()
+        )
+
+        assertEquals(1, active.size)
+        assertEquals("00wrapped", active.single().contractId)
+        assertEquals("PrivateOffer", active.single().templateName)
+    }
 }

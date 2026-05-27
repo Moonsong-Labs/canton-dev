@@ -231,7 +231,6 @@ class TopologyGraphPanel : JPanel() {
         minimumSize = Dimension(360, 260)
         background = TopologyGraphTheme.canvas
         isOpaque = true
-        toolTipText = ""
         addMouseListener(object : MouseAdapter() {
             override fun mousePressed(e: MouseEvent) {
                 cancelPendingSingleClick()
@@ -428,9 +427,6 @@ class TopologyGraphPanel : JPanel() {
             .orEmpty()
         if (selectionDetails.isEmpty()) {
             closePropertiesOverlay()
-        } else if (selected != null && propertiesOwner == null) {
-            propertiesOwner = selected
-            propertiesVisible = true
         }
         repaint()
     }

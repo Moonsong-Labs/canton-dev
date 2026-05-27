@@ -8,22 +8,24 @@ import com.intellij.openapi.fileChooser.FileChooserDescriptor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.wm.ToolWindowManager
-import com.intellij.ui.JBColor
-import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
-import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.components.JBTextField
 import com.intellij.ui.table.JBTable
 import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
 import java.awt.Color
+import java.awt.Component
+import java.awt.Cursor
 import java.awt.Dimension
 import java.awt.FlowLayout
+import java.awt.Font
 import java.awt.Graphics
 import java.awt.Graphics2D
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
+import java.awt.Insets
+import java.awt.LayoutManager
 import java.awt.RenderingHints
 import java.awt.event.FocusAdapter
 import java.awt.event.FocusEvent
@@ -32,14 +34,17 @@ import java.awt.event.MouseEvent
 import java.nio.file.Path
 import javax.swing.BorderFactory
 import javax.swing.DefaultComboBoxModel
+import javax.swing.DefaultListCellRenderer
 import javax.swing.DefaultListModel
 import javax.swing.JButton
 import javax.swing.JComboBox
 import javax.swing.JComponent
 import javax.swing.JCheckBox
 import javax.swing.JLabel
+import javax.swing.JList
 import javax.swing.JPanel
 import javax.swing.JPopupMenu
+import javax.swing.JScrollPane
 import javax.swing.JSplitPane
 import javax.swing.JTabbedPane
 import javax.swing.JOptionPane
@@ -47,9 +52,15 @@ import javax.swing.JTable
 import javax.swing.JMenuItem
 import javax.swing.ListSelectionModel
 import javax.swing.SwingUtilities
+import javax.swing.JTextPane
+import javax.swing.SwingConstants
 import javax.swing.plaf.basic.BasicSplitPaneDivider
 import javax.swing.plaf.basic.BasicSplitPaneUI
+import javax.swing.table.DefaultTableCellRenderer
 import javax.swing.table.DefaultTableModel
+import javax.swing.table.JTableHeader
+import javax.swing.text.SimpleAttributeSet
+import javax.swing.text.StyleConstants
 
 class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()), Disposable {
     private val profiles = SandboxProfileService.getInstance(project)
@@ -62,10 +73,6 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
     private val profileCombo = ProfileComboBox(profileComboModel) { deleteProfile(it) }
     private val nameField = JBTextField()
     private val portBaseField = JBTextField()
-    private val overviewStatusLabel = overviewLabel()
-    private val overviewTopologyLabel = overviewLabel()
-    private val overviewDarsLabel = overviewLabel()
-    private val overviewPartiesLabel = overviewLabel()
 
     private val participantModel = tableModel("Participant", "Ledger", "Admin", "JSON")
     private val syncModel = tableModel("Sync Domain", "Sequencer", "Seq Public", "Seq Admin", "Mediator", "Med Admin")
@@ -86,9 +93,12 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
     private val partySyncCombo = JComboBox<String>()
 
     private val componentPalette = TopologyComponentPalettePanel()
-    private val logArea = JBTextArea().apply {
+    private val logArea = JTextPane().apply {
         isEditable = false
-        lineWrap = false
+        background = TopologyGraphTheme.canvas
+        foreground = TopologyGraphTheme.detail
+        font = Font(Font.MONOSPACED, Font.PLAIN, 12)
+        border = JBUI.Borders.empty(10)
     }
 
     private var currentProfile: SandboxProfile = profiles.selectedProfile()
@@ -100,7 +110,9 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
     private var suppressTableNavigation = false
 
     init {
+        background = TopologyGraphTheme.canvas
         border = BorderFactory.createEmptyBorder(6, 6, 6, 6)
+        styleNetworkControls()
         add(toolbar(), BorderLayout.NORTH)
         add(mainContent(), BorderLayout.CENTER)
         wireTableNavigation()
@@ -114,6 +126,7 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
 
     private fun toolbar(): JComponent {
         val panel = JPanel(BorderLayout(8, 0)).apply {
+            background = TopologyGraphTheme.canvas
             border = JBUI.Borders.empty(0, 0, 6, 0)
         }
         profileCombo.addActionListener {
@@ -124,6 +137,9 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
         }
         nameField.columns = 24
         portBaseField.columns = 6
+        compactToolbarControl(profileCombo)
+        compactToolbarControl(nameField)
+        compactToolbarControl(portBaseField)
         listOf(nameField, portBaseField).forEach {
             it.addFocusListener(object : FocusAdapter() {
                 override fun focusLost(e: FocusEvent) {
@@ -133,12 +149,12 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
         }
 
         panel.add(row(
-            JLabel("Profile"),
+            networkLabel("Profile"),
             profileCombo,
             button("New", AllIcons.General.Add) { loadProfile(profiles.createProfile()) },
-            JLabel("Name"),
+            networkLabel("Name"),
             nameField,
-            JLabel("Port base"),
+            networkLabel("Port base"),
             portBaseField
         ), BorderLayout.CENTER)
         panel.add(row(
@@ -241,85 +257,65 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
         }
 
     private fun mainContent(): JComponent {
-        val tabs = JTabbedPane()
+        val tabs = styledTabbedPane()
         tabs.addTab("Topology", topologyTab())
         tabs.addTab("Nodes", nodesTab())
         tabs.addTab("DARs", darsTab())
         tabs.addTab("Parties", partiesTab())
-        tabs.addTab("Logs", JBScrollPane(logArea))
+        tabs.addTab("Logs", logsTab())
         return JPanel(BorderLayout()).apply {
-            add(overviewPanel(), BorderLayout.NORTH)
+            background = TopologyGraphTheme.canvas
             add(tabs, BorderLayout.CENTER)
         }
     }
 
-    private fun overviewPanel(): JComponent =
-        JPanel(FlowLayout(FlowLayout.LEFT, 6, 2)).apply {
-            border = JBUI.Borders.empty(0, 0, 6, 0)
-            add(overviewStatusLabel)
-            add(overviewTopologyLabel)
-            add(overviewDarsLabel)
-            add(overviewPartiesLabel)
-        }
-
-    private fun overviewLabel(): JBLabel =
-        JBLabel().apply {
-            isOpaque = true
-            background = JBColor.PanelBackground
-            border = BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(JBColor.border()),
-                JBUI.Borders.empty(4, 8)
-            )
-        }
-
     private fun nodesTab(): JComponent {
-        val tabs = JTabbedPane()
-        tabs.addTab("Participants", JPanel(BorderLayout()).apply {
-            add(JBScrollPane(participantTable), BorderLayout.CENTER)
-        })
-        tabs.addTab("Sync Domains", JPanel(BorderLayout()).apply {
-            add(JBScrollPane(syncTable), BorderLayout.CENTER)
-        })
-        tabs.addTab("Connections", JPanel(BorderLayout()).apply {
-            add(JBScrollPane(connectionTable), BorderLayout.CENTER)
-        })
-        return tabs
+        val tabs = styledTabbedPane()
+        tabs.addTab("Participants", networkCard(themedScrollPane(participantTable)))
+        tabs.addTab("Sync Domains", networkCard(themedScrollPane(syncTable)))
+        tabs.addTab("Connections", networkCard(themedScrollPane(connectionTable)))
+        return networkSurface(tabs)
     }
 
     private fun darsTab(): JComponent {
-        val panel = JPanel(BorderLayout(6, 6))
-        panel.add(JBScrollPane(darTable), BorderLayout.CENTER)
-        panel.add(JPanel(BorderLayout()).apply {
-            border = BorderFactory.createTitledBorder("Assign to participants")
-            add(JBScrollPane(darParticipantList), BorderLayout.CENTER)
-            add(row(
-                button("Refresh DARs", AllIcons.Actions.Refresh) { refreshDars() },
-                button("Add DAR", AllIcons.General.Add) { addDarFromChooser() },
-                button("Assign Selected", AllIcons.Actions.Commit) {
-                    val dar = selectedDarPath() ?: return@button
-                    val participantIds = darParticipantList.selectedValuesList.mapNotNull { name ->
-                        currentProfile.participants.firstOrNull { it.name == name }?.id
+        val panel = networkPanel(BorderLayout(8, 8))
+        panel.add(networkCard(themedScrollPane(darTable)), BorderLayout.CENTER)
+        panel.add(networkCard(
+            content = JPanel(BorderLayout(0, 8)).apply {
+                background = TopologyGraphTheme.panel
+                add(networkCardTitle("Assign to participants"), BorderLayout.NORTH)
+                add(themedScrollPane(darParticipantList), BorderLayout.CENTER)
+                add(row(
+                    button("Refresh DARs", AllIcons.Actions.Refresh) { refreshDars() },
+                    button("Add DAR", AllIcons.General.Add) { addDarFromChooser() },
+                    button("Assign Selected", AllIcons.Actions.Commit) {
+                        val dar = selectedDarPath() ?: return@button
+                        val participantIds = darParticipantList.selectedValuesList.mapNotNull { name ->
+                            currentProfile.participants.firstOrNull { it.name == name }?.id
+                        }
+                        assignDar(dar, participantIds)
+                    },
+                    button("Remove Assignment", AllIcons.General.Remove) {
+                        selectedDarPath()?.let { path ->
+                            currentProfile.darAssignments.removeIf { it.darPath == path }
+                            persistAndRefresh()
+                        }
                     }
-                    assignDar(dar, participantIds)
-                },
-                button("Remove Assignment", AllIcons.General.Remove) {
-                    selectedDarPath()?.let { path ->
-                        currentProfile.darAssignments.removeIf { it.darPath == path }
-                        persistAndRefresh()
-                    }
-                }
-            ), BorderLayout.SOUTH)
+                ), BorderLayout.SOUTH)
+            }
+        ).apply {
+            preferredSize = Dimension(320, 160)
         }, BorderLayout.EAST)
         return panel
     }
 
     private fun partiesTab(): JComponent {
         val editor = row(
-            JLabel("Party"),
+            networkLabel("Party"),
             partyField,
-            JLabel("Participant"),
+            networkLabel("Participant"),
             partyParticipantCombo,
-            JLabel("Sync"),
+            networkLabel("Sync"),
             partySyncCombo,
             button("Allocate in Profile", AllIcons.General.Add) {
                 val participant = currentProfile.participants.firstOrNull { it.name == partyParticipantCombo.selectedItem }
@@ -331,11 +327,16 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
             },
             button("Remove Selected", AllIcons.General.Remove) { removeSelectedPartyAllocation() }
         )
-        return JPanel(BorderLayout()).apply {
-            add(JBScrollPane(partyTable), BorderLayout.CENTER)
-            add(editor, BorderLayout.SOUTH)
+        return networkPanel(BorderLayout(8, 8)).apply {
+            add(networkCard(themedScrollPane(partyTable)), BorderLayout.CENTER)
+            add(networkCard(editor), BorderLayout.SOUTH)
         }
     }
+
+    private fun logsTab(): JComponent =
+        networkPanel(BorderLayout()).apply {
+            add(networkCard(themedScrollPane(logArea)), BorderLayout.CENTER)
+        }
 
     private fun loadProfile(profile: SandboxProfile) {
         loadingProfile = true
@@ -841,7 +842,6 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
         renderPalette()
         refreshDarParticipantList()
         refreshPartyCombos()
-        renderOverview()
     }
 
     private fun renderPalette() {
@@ -887,7 +887,7 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
     }
 
     private fun renderSession(state: SandboxSessionState) {
-        logArea.text = state.log
+        renderLog(state.log)
         logArea.caretPosition = logArea.document.length
         val belongsToCurrentProfile = state.profileId.isBlank() || state.profileId == currentProfile.id
         val effectiveState = if (belongsToCurrentProfile) {
@@ -900,92 +900,8 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
             effectiveState.health,
             if (belongsToCurrentProfile) state.log.hashCode() else 0
         )
-        renderOverview(effectiveState)
         renderInspector(currentTopologySelection)
     }
-
-    private fun renderOverview(session: SandboxSessionState = latestSession) {
-        renderStatusPill(session)
-        overviewTopologyLabel.text = "Topology: ${currentProfile.participants.size} participant(s), ${currentProfile.synchronizers.size} sync domain(s)"
-        renderDarsPill()
-        overviewPartiesLabel.text = "Parties: ${currentProfile.partyAllocations.size} allocation(s)"
-    }
-
-    private fun renderDarsPill() {
-        val participantsWithoutDars = currentProfile.participantsWithoutDars()
-        val warning = !currentProfile.hasUploadedDarAssignments() || participantsWithoutDars.isNotEmpty()
-        val colors = if (warning) warningColors() else neutralColors()
-        overviewDarsLabel.text = when {
-            !currentProfile.hasUploadedDarAssignments() -> "! DARs: none uploaded"
-            participantsWithoutDars.isNotEmpty() -> "DARs: ${currentProfile.darAssignments.size} assignment(s), ${participantsWithoutDars.size} PN missing"
-            else -> "DARs: ${currentProfile.darAssignments.size} assignment(s)"
-        }
-        overviewDarsLabel.foreground = colors.foreground
-        overviewDarsLabel.background = colors.background
-        overviewDarsLabel.border = BorderFactory.createCompoundBorder(
-            BorderFactory.createLineBorder(colors.border),
-            JBUI.Borders.empty(4, 8)
-        )
-        overviewDarsLabel.toolTipText = when {
-            !currentProfile.hasUploadedDarAssignments() -> "No DAR files are assigned to be uploaded to any participant."
-            participantsWithoutDars.isNotEmpty() -> "No DAR assigned to: ${participantsWithoutDars.joinToString(", ") { it.name }}"
-            else -> "DAR assignments are configured for every participant."
-        }
-    }
-
-    private fun renderStatusPill(session: SandboxSessionState) {
-        val colors = statusColors(session.status)
-        overviewStatusLabel.text = "● Status: ${session.status.presentableName}"
-        overviewStatusLabel.foreground = colors.foreground
-        overviewStatusLabel.background = colors.background
-        overviewStatusLabel.border = BorderFactory.createCompoundBorder(
-            BorderFactory.createLineBorder(colors.border),
-            JBUI.Borders.empty(4, 8)
-        )
-        overviewStatusLabel.toolTipText = session.message.ifBlank { session.status.presentableName }
-    }
-
-    private data class StatusColors(val foreground: Color, val background: Color, val border: Color)
-
-    private fun neutralColors(): StatusColors =
-        StatusColors(
-            foreground = JBColor.foreground(),
-            background = JBColor.PanelBackground,
-            border = JBColor.border()
-        )
-
-    private fun warningColors(): StatusColors =
-        StatusColors(
-            foreground = Color(0xFFD36A),
-            background = Color(0x34250B),
-            border = Color(0xC89124)
-        )
-
-    private fun statusColors(status: SandboxSessionStatus): StatusColors =
-        when (status) {
-            SandboxSessionStatus.RUNNING -> StatusColors(
-                foreground = Color(0x5CFF9D),
-                background = Color(0x0E2F1D),
-                border = Color(0x1FCE70)
-            )
-            SandboxSessionStatus.STOPPED -> StatusColors(
-                foreground = Color(0xFF6B7A),
-                background = Color(0x35151A),
-                border = Color(0xE05260)
-            )
-            SandboxSessionStatus.FAILED -> StatusColors(
-                foreground = Color(0xFF4D6D),
-                background = Color(0x3B1019),
-                border = Color(0xFF3156)
-            )
-            SandboxSessionStatus.GENERATING,
-            SandboxSessionStatus.STARTING,
-            SandboxSessionStatus.STOPPING -> StatusColors(
-                foreground = Color(0xFFD36A),
-                background = Color(0x34250B),
-                border = Color(0xC89124)
-            )
-        }
 
     private fun renderInspector(selection: TopologyGraphPanel.Selection?) {
         val text = when (selection) {
@@ -1057,10 +973,127 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
         })
     }
 
+    private fun styleNetworkControls() {
+        listOf(nameField, portBaseField, partyField).forEach(::styleTextField)
+        listOf(partyParticipantCombo, partySyncCombo).forEach(::styleComboBox)
+        styleList(darParticipantList)
+    }
+
+    private fun styledTabbedPane(): JTabbedPane =
+        JTabbedPane().apply {
+            background = TopologyGraphTheme.canvas
+            foreground = TopologyGraphTheme.text
+            border = BorderFactory.createEmptyBorder()
+        }
+
+    private fun networkSurface(content: JComponent): JComponent =
+        networkPanel(BorderLayout()).apply {
+            add(content, BorderLayout.CENTER)
+        }
+
+    private fun networkPanel(layout: LayoutManager): JPanel =
+        JPanel(layout).apply {
+            background = TopologyGraphTheme.canvas
+            foreground = TopologyGraphTheme.text
+        }
+
+    private fun networkCard(content: JComponent): JPanel =
+        JPanel(BorderLayout()).apply {
+            background = TopologyGraphTheme.panel
+            foreground = TopologyGraphTheme.text
+            border = BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(TopologyGraphTheme.panelBorder),
+                JBUI.Borders.empty(10)
+            )
+            add(content, BorderLayout.CENTER)
+        }
+
+    private fun networkCardTitle(text: String): JLabel =
+        JLabel(text).apply {
+            foreground = TopologyGraphTheme.text
+            font = font.deriveFont(Font.BOLD, 13f)
+        }
+
+    private fun networkLabel(text: String): JLabel =
+        JLabel(text).apply {
+            foreground = TopologyGraphTheme.detail
+            border = JBUI.Borders.emptyRight(2)
+            font = font.deriveFont(Font.PLAIN, 12f)
+        }
+
+    private fun themedScrollPane(component: JComponent): JBScrollPane =
+        JBScrollPane(component).apply {
+            border = BorderFactory.createLineBorder(TopologyGraphTheme.panelBorder)
+            background = TopologyGraphTheme.panel
+            viewport.background = TopologyGraphTheme.panel
+            horizontalScrollBarPolicy = JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED
+            verticalScrollBarPolicy = JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED
+        }
+
+    private fun styleTextField(field: JBTextField) {
+        field.foreground = TopologyGraphTheme.text
+        field.background = TopologyGraphTheme.panel
+        field.caretColor = TopologyGraphTheme.hover
+        field.isOpaque = false
+        field.border = BorderFactory.createCompoundBorder(
+            NetworkRoundBorder(TopologyGraphTheme.panelBorder, 12),
+            JBUI.Borders.empty(4, 9)
+        )
+    }
+
+    private fun compactToolbarControl(component: JComponent) {
+        val width = component.preferredSize.width.coerceAtLeast(34)
+        val size = Dimension(width, 34)
+        component.preferredSize = size
+        component.minimumSize = Dimension(32, 34)
+        component.maximumSize = Dimension(Int.MAX_VALUE, 34)
+    }
+
+    private fun styleComboBox(combo: JComboBox<String>) {
+        combo.foreground = TopologyGraphTheme.text
+        combo.background = TopologyGraphTheme.panel
+        combo.border = BorderFactory.createLineBorder(TopologyGraphTheme.panelBorder)
+        combo.renderer = NetworkListCellRenderer()
+    }
+
+    private fun styleList(list: JList<String>) {
+        list.background = TopologyGraphTheme.panel
+        list.foreground = TopologyGraphTheme.text
+        list.selectionBackground = networkAlpha(TopologyGraphTheme.selected, 90)
+        list.selectionForeground = TopologyGraphTheme.text
+        list.fixedCellHeight = 28
+        list.cellRenderer = NetworkListCellRenderer()
+    }
+
+    private fun renderLog(log: String) {
+        val document = logArea.styledDocument
+        document.remove(0, document.length)
+        val lines = if (log.isEmpty()) listOf("") else log.split('\n')
+        for ((index, line) in lines.withIndex()) {
+            val attributes = SimpleAttributeSet().apply {
+                StyleConstants.setForeground(this, networkLogLineColor(line))
+                StyleConstants.setFontFamily(this, Font.MONOSPACED)
+                StyleConstants.setFontSize(this, 12)
+            }
+            document.insertString(document.length, line + if (index < lines.lastIndex) "\n" else "", attributes)
+        }
+    }
+
     private fun table(model: DefaultTableModel): JBTable =
         JBTable(model).apply {
             setSelectionMode(ListSelectionModel.SINGLE_SELECTION)
             autoResizeMode = JTable.AUTO_RESIZE_ALL_COLUMNS
+            rowHeight = 30
+            intercellSpacing = Dimension(0, 0)
+            gridColor = networkAlpha(TopologyGraphTheme.panelBorder, 150)
+            showHorizontalLines = true
+            showVerticalLines = true
+            background = TopologyGraphTheme.panel
+            foreground = TopologyGraphTheme.text
+            selectionBackground = networkAlpha(TopologyGraphTheme.selected, 90)
+            selectionForeground = TopologyGraphTheme.text
+            setDefaultRenderer(Object::class.java, NetworkTableCellRenderer())
+            styleTableHeader(tableHeader)
         }
 
     private fun tableModel(vararg columns: String): DefaultTableModel =
@@ -1090,20 +1123,35 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
         add(component, fieldConstraints)
     }
 
+    private fun styleTableHeader(header: JTableHeader) {
+        header.background = TopologyGraphTheme.canvas
+        header.foreground = TopologyGraphTheme.warning
+        header.font = header.font.deriveFont(Font.BOLD, 12f)
+        header.border = BorderFactory.createMatteBorder(0, 0, 1, 0, TopologyGraphTheme.panelBorder)
+        header.defaultRenderer = NetworkTableHeaderRenderer(header.defaultRenderer)
+    }
+
     private fun row(vararg components: JComponent): JPanel =
-        JPanel(FlowLayout(FlowLayout.LEFT, 4, 2)).apply { components.forEach(::add) }
+        JPanel(FlowLayout(FlowLayout.LEFT, 6, 2)).apply {
+            background = TopologyGraphTheme.canvas
+            foreground = TopologyGraphTheme.text
+            components.forEach(::add)
+        }
 
     private fun button(text: String, icon: javax.swing.Icon? = null, action: () -> Unit): JButton =
-        JButton(text, icon).apply {
+        NetworkButton(text, icon).apply {
             toolTipText = text
             addActionListener { action() }
         }
 
     private fun popupButton(text: String, builder: (JPopupMenu) -> Unit): JButton =
-        JButton(text).apply {
+        NetworkButton(text, null).apply {
             toolTipText = text
             addActionListener {
-                val popup = JPopupMenu()
+                val popup = JPopupMenu().apply {
+                    background = TopologyGraphTheme.panel
+                    border = BorderFactory.createLineBorder(TopologyGraphTheme.panelBorder)
+                }
                 builder(popup)
                 popup.show(this, 0, height)
             }
@@ -1111,6 +1159,10 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
 
     private fun menuItem(text: String, icon: javax.swing.Icon? = null, action: () -> Unit): JMenuItem =
         JMenuItem(text, icon).apply {
+            isOpaque = true
+            background = TopologyGraphTheme.panel
+            foreground = TopologyGraphTheme.text
+            border = JBUI.Borders.empty(5, 10)
             addActionListener { action() }
         }
 
@@ -1156,6 +1208,196 @@ internal fun participantInspectorText(
         |Parties:
         |${parties.ifBlank { "None allocated" }}
         |""".trimMargin()
+}
+
+internal fun networkParticipantColor(): Color = TopologyGraphTheme.participantBorder
+
+internal fun networkSyncColor(name: String): Color =
+    if (name == SandboxDefaults.SHARED_SYNCHRONIZER_NAME) TopologyGraphTheme.globalSyncBorder else TopologyGraphTheme.syncBorder
+
+internal fun networkConnectionColor(connected: Boolean): Color =
+    if (connected) TopologyGraphTheme.syncBorder else Color(0xFF5C7A)
+
+internal fun networkDarInspectColor(inspect: String): Color =
+    if (inspect.equals("ok", ignoreCase = true)) TopologyGraphTheme.syncBorder else TopologyGraphTheme.warning
+
+internal fun networkLogLineColor(line: String): Color {
+    val lower = line.lowercase()
+    return when {
+        "error" in lower || "exception" in lower || "failed" in lower -> Color(0xFF5C7A)
+        "warn" in lower || "warning" in lower -> TopologyGraphTheme.warning
+        "ready" in lower || "running" in lower || "serving" in lower || "started" in lower -> TopologyGraphTheme.syncBorder
+        else -> TopologyGraphTheme.detail
+    }
+}
+
+private fun networkAlpha(color: Color, alpha: Int): Color =
+    Color(color.red, color.green, color.blue, alpha.coerceIn(0, 255))
+
+private class NetworkTableHeaderRenderer(
+    private val delegate: javax.swing.table.TableCellRenderer
+) : javax.swing.table.TableCellRenderer {
+    override fun getTableCellRendererComponent(
+        table: JTable,
+        value: Any?,
+        isSelected: Boolean,
+        hasFocus: Boolean,
+        row: Int,
+        column: Int
+    ): Component =
+        delegate.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column).apply {
+            background = TopologyGraphTheme.canvas
+            foreground = TopologyGraphTheme.warning
+            font = font.deriveFont(Font.BOLD, 12f)
+            if (this is JComponent) {
+                isOpaque = true
+                border = JBUI.Borders.empty(0, 10)
+            }
+            if (this is JLabel) {
+                horizontalAlignment = SwingConstants.LEFT
+            }
+        }
+}
+
+private class NetworkTableCellRenderer : DefaultTableCellRenderer() {
+    override fun getTableCellRendererComponent(
+        table: JTable,
+        value: Any?,
+        isSelected: Boolean,
+        hasFocus: Boolean,
+        row: Int,
+        column: Int
+    ): Component {
+        super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column)
+        val modelColumn = table.convertColumnIndexToModel(column)
+        val columnName = table.model.getColumnName(modelColumn)
+        val textValue = value?.toString().orEmpty()
+
+        isOpaque = true
+        border = JBUI.Borders.empty(0, 10)
+        horizontalAlignment = SwingConstants.LEFT
+        font = table.font.deriveFont(Font.PLAIN)
+        background = if (isSelected) networkAlpha(TopologyGraphTheme.selected, 105) else TopologyGraphTheme.panel
+        foreground = TopologyGraphTheme.text
+
+        when (columnName) {
+            "Participant" -> {
+                foreground = networkParticipantColor()
+                font = font.deriveFont(Font.BOLD)
+            }
+            "Sync Domain" -> {
+                foreground = networkSyncColor(textValue)
+                font = font.deriveFont(Font.BOLD)
+            }
+            "Connected" -> {
+                val connected = value == true || textValue.equals("true", ignoreCase = true) || textValue.equals("connected", ignoreCase = true)
+                text = if (connected) "connected" else "disconnected"
+                foreground = networkConnectionColor(connected)
+                background = if (isSelected) networkAlpha(TopologyGraphTheme.selected, 105) else networkAlpha(networkConnectionColor(connected), 34)
+                border = BorderFactory.createCompoundBorder(
+                    BorderFactory.createMatteBorder(4, 8, 4, 8, TopologyGraphTheme.panel),
+                    BorderFactory.createLineBorder(networkAlpha(networkConnectionColor(connected), 165))
+                )
+                horizontalAlignment = SwingConstants.CENTER
+            }
+            "Inspect" -> {
+                foreground = networkDarInspectColor(textValue)
+                text = textValue.ifBlank { "not inspected" }
+                font = font.deriveFont(if (text.equals("ok", ignoreCase = true)) Font.PLAIN else Font.BOLD)
+            }
+            "DAR", "Main Package" -> {
+                foreground = TopologyGraphTheme.detail
+                font = Font(Font.MONOSPACED, Font.PLAIN, 12)
+            }
+            "Ledger", "Admin", "JSON", "Seq Public", "Seq Admin", "Med Admin" -> {
+                foreground = TopologyGraphTheme.detail
+                horizontalAlignment = SwingConstants.RIGHT
+            }
+            "Assigned Participants" -> foreground = TopologyGraphTheme.participantBorder
+            "Party Hint" -> foreground = TopologyGraphTheme.warning
+            "Name", "Version", "Sequencer", "Mediator" -> foreground = TopologyGraphTheme.text
+        }
+        return this
+    }
+}
+
+private class NetworkListCellRenderer : DefaultListCellRenderer() {
+    override fun getListCellRendererComponent(
+        list: JList<*>,
+        value: Any?,
+        index: Int,
+        isSelected: Boolean,
+        cellHasFocus: Boolean
+    ): Component {
+        super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus)
+        isOpaque = true
+        border = JBUI.Borders.empty(4, 10)
+        background = if (isSelected) networkAlpha(TopologyGraphTheme.selected, 90) else TopologyGraphTheme.panel
+        foreground = if (isSelected) TopologyGraphTheme.text else TopologyGraphTheme.participantBorder
+        font = font.deriveFont(if (isSelected) Font.BOLD else Font.PLAIN)
+        return this
+    }
+}
+
+private class NetworkButton(text: String, icon: javax.swing.Icon?) : JButton(text, icon) {
+    init {
+        foreground = TopologyGraphTheme.text
+        background = TopologyGraphTheme.panel
+        isOpaque = false
+        isContentAreaFilled = false
+        isBorderPainted = false
+        isFocusPainted = false
+        cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+        border = JBUI.Borders.empty(5, 11)
+        margin = Insets(0, 0, 0, 0)
+        horizontalAlignment = SwingConstants.CENTER
+    }
+
+    override fun getPreferredSize(): Dimension {
+        val size = super.getPreferredSize()
+        return Dimension(size.width.coerceAtLeast(34), 34)
+    }
+
+    override fun paintComponent(g: Graphics) {
+        val g2 = g.create() as Graphics2D
+        try {
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            g2.color = when {
+                model.isPressed -> networkAlpha(TopologyGraphTheme.selected, 70)
+                model.isRollover -> networkAlpha(TopologyGraphTheme.hover, 34)
+                else -> TopologyGraphTheme.panel
+            }
+            g2.fillRoundRect(0, 0, width - 1, height - 1, 14, 14)
+            g2.color = if (model.isRollover) TopologyGraphTheme.hover else TopologyGraphTheme.panelBorder
+            g2.drawRoundRect(0, 0, width - 1, height - 1, 14, 14)
+        } finally {
+            g2.dispose()
+        }
+        super.paintComponent(g)
+    }
+}
+
+private class NetworkRoundBorder(
+    private val color: Color,
+    private val radius: Int
+) : javax.swing.border.AbstractBorder() {
+    override fun getBorderInsets(c: Component): Insets = Insets(1, 1, 1, 1)
+
+    override fun getBorderInsets(c: Component, insets: Insets): Insets {
+        insets.set(1, 1, 1, 1)
+        return insets
+    }
+
+    override fun paintBorder(c: Component, g: Graphics, x: Int, y: Int, width: Int, height: Int) {
+        val g2 = g.create() as Graphics2D
+        try {
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            g2.color = color
+            g2.drawRoundRect(x, y, width - 1, height - 1, radius, radius)
+        } finally {
+            g2.dispose()
+        }
+    }
 }
 
 private class TopologySplitPaneUI : BasicSplitPaneUI() {

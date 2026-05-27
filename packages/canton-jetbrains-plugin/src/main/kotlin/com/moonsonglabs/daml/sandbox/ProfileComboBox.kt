@@ -12,6 +12,9 @@ import java.awt.Cursor
 import java.awt.Dimension
 import java.awt.FlowLayout
 import java.awt.Font
+import java.awt.Graphics
+import java.awt.Graphics2D
+import java.awt.RenderingHints
 import java.awt.event.ActionEvent
 import java.awt.event.ActionListener
 import java.awt.event.MouseAdapter
@@ -38,6 +41,7 @@ internal class ProfileComboBox(
     private val arrowLabel = JBLabel("v", SwingConstants.CENTER)
     private var popup: JBPopup? = null
     private var selectedIndexValue = -1
+    private var hover = false
 
     val isDeletingProfileFromPopup: Boolean = false
 
@@ -51,19 +55,28 @@ internal class ProfileComboBox(
         get() = selectedProfile()
 
     init {
-        isOpaque = true
+        isOpaque = false
         background = ProfileSelectorTheme.background
         foreground = ProfileSelectorTheme.text
-        border = BorderFactory.createCompoundBorder(
-            BorderFactory.createLineBorder(ProfileSelectorTheme.border),
-            JBUI.Borders.empty(6, 10)
-        )
+        border = JBUI.Borders.empty(5, 10)
         cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
         nameLabel.foreground = ProfileSelectorTheme.text
+        nameLabel.font = nameLabel.font.deriveFont(Font.PLAIN, 12f)
         arrowLabel.foreground = ProfileSelectorTheme.muted
+        arrowLabel.font = arrowLabel.font.deriveFont(Font.BOLD, 12f)
         add(nameLabel, BorderLayout.CENTER)
         add(arrowLabel, BorderLayout.EAST)
         val openPopupListener = object : MouseAdapter() {
+            override fun mouseEntered(e: MouseEvent) {
+                hover = true
+                repaint()
+            }
+
+            override fun mouseExited(e: MouseEvent) {
+                hover = false
+                repaint()
+            }
+
             override fun mouseClicked(e: MouseEvent) {
                 showProfilePopup()
             }
@@ -77,6 +90,25 @@ internal class ProfileComboBox(
             override fun contentsChanged(e: ListDataEvent) = reconcileSelection()
         })
         reconcileSelection()
+    }
+
+    override fun getPreferredSize(): Dimension {
+        val size = super.getPreferredSize()
+        return Dimension(size.width.coerceAtLeast(260), 34)
+    }
+
+    override fun paintComponent(g: Graphics) {
+        val g2 = g.create() as Graphics2D
+        try {
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
+            g2.color = if (hover) ProfileSelectorTheme.hover else ProfileSelectorTheme.background
+            g2.fillRoundRect(0, 0, width - 1, height - 1, 12, 12)
+            g2.color = if (hover) ProfileSelectorTheme.focus else ProfileSelectorTheme.border
+            g2.drawRoundRect(0, 0, width - 1, height - 1, 12, 12)
+        } finally {
+            g2.dispose()
+        }
+        super.paintComponent(g)
     }
 
     fun addActionListener(listener: ActionListener) {
@@ -120,9 +152,9 @@ internal class ProfileComboBox(
         val row = JPanel(BorderLayout(8, 0)).apply {
             isOpaque = true
             background = if (selected) ProfileSelectorTheme.selected else ProfileSelectorTheme.popup
-            border = JBUI.Borders.empty(6, 10)
+            border = JBUI.Borders.empty(5, 10)
             cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
-            maximumSize = Dimension(Int.MAX_VALUE, 36)
+            maximumSize = Dimension(Int.MAX_VALUE, 34)
             toolTipText = profile.id
         }
         val label = JBLabel(profile.name).apply {
@@ -212,6 +244,7 @@ internal class ProfileComboBox(
         val hover = Color(0x273140)
         val selected = Color(0x314D81)
         val border = Color(0x46505D)
+        val focus = Color(0x2DE2E6)
         val text = Color(0xDDE3EA)
         val muted = Color(0x9EA7B4)
     }

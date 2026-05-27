@@ -8,4 +8,10 @@ object DamlIcons {
 
     @JvmField
     val ToolWindow = IconLoader.getIcon("/icons/daml-toolwindow.svg", DamlIcons::class.java)
+
+    @JvmField
+    val WhiteToolWindow = IconLoader.getIcon("/icons/daml-toolwindow-white.svg", DamlIcons::class.java)
+
+    @JvmField
+    val SandboxToolWindow = WhiteToolWindow
 }

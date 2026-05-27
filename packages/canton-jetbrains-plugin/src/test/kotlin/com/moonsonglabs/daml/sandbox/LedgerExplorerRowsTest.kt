@@ -10,18 +10,21 @@ class LedgerExplorerRowsTest {
     fun `maps active contracts and events into explorer activity rows`() {
         val rows = LedgerExplorerRows.from(snapshot())
 
-        assertEquals(listOf("Archived", "Created", "Active"), rows.map { it.kind })
-        val active = rows.first { it.kind == "Active" }
+        assertEquals(listOf("Archived", "Active", "Created", "Active"), rows.map { it.kind })
+        val active = rows.first { it.kind == "Active" && it.contractId == "00active" }
         assertEquals("PublicSettlement", active.templateName)
         assertEquals("global", active.syncName)
         assertEquals(listOf("BridgePublic::party", "Operator::party"), active.parties)
         assertEquals("private-settlement", active.packageName)
         assertEquals(mapOf("amount" to "42.0"), active.argumentFields)
+        val activeFromHistory = rows.first { it.kind == "Active" && it.contractId == "00created" }
+        assertEquals("PrivateOffer", activeFromHistory.templateName)
+        assertEquals("privateSync", activeFromHistory.syncName)
     }
 
     @Test
     fun `search matches template contract party synchronizer package and arguments`() {
-        val row = LedgerExplorerRows.from(snapshot()).first { it.kind == "Active" }
+        val row = LedgerExplorerRows.from(snapshot()).first { it.kind == "Active" && it.contractId == "00active" }
 
         listOf("publicsettlement", "00active", "bridgepublic", "global", "private-settlement", "amount", "42.0")
             .forEach { query -> assertTrue("Expected query $query to match", LedgerExplorerRows.matches(row, query)) }
@@ -64,7 +67,7 @@ class LedgerExplorerRowsTest {
             ExplorerFilterState(syncDomains = emptySet(), parties = emptySet(), kinds = setOf("Active", "Created", "Archived"))
         )
 
-        assertEquals(3, visible.size)
+        assertEquals(4, visible.size)
     }
 
     private fun snapshot(): LedgerExplorerSnapshot =

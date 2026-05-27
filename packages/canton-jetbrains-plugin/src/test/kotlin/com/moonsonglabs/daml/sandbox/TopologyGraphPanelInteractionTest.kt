@@ -97,6 +97,35 @@ class TopologyGraphPanelInteractionTest {
     }
 
     @Test
+    fun `hovering a participant does not open details`() {
+        val profile = SandboxDefaults.newProfile(null)
+        val panel = renderedPanel(profile)
+        var selected: TopologyGraphPanel.Selection? = null
+        panel.setSelectionListener { selected = it }
+
+        panel.dispatchMouse(MouseEvent.MOUSE_MOVED, 120, 236)
+
+        assertEquals("Hover must not invoke the detail selection listener", null, selected)
+        assertFalse(panel.isPropertiesOverlayVisibleForTest())
+        assertEquals("Graph details should not be registered as Swing hover popups", null, panel.toolTipText)
+    }
+
+    @Test
+    fun `refreshing details after closing overlay does not reopen it`() {
+        val profile = SandboxDefaults.newProfile(null)
+        val panel = renderedPanel(profile)
+        panel.openParticipantOverlay(profile)
+        val close = panel.propertiesOverlayBoundsForTest()!!.let { it.x + it.width - 18 to it.y + 16 }
+
+        panel.dispatchMouse(MouseEvent.MOUSE_PRESSED, close.first, close.second)
+        panel.dispatchMouse(MouseEvent.MOUSE_RELEASED, close.first, close.second)
+        panel.dispatchMouse(MouseEvent.MOUSE_CLICKED, close.first, close.second)
+        panel.setSelectionDetails("${TopologyNodeIcons.PARTICIPANT} Participant - issuer\n\nHealth: live=true ready=true")
+
+        assertFalse(panel.isPropertiesOverlayVisibleForTest())
+    }
+
+    @Test
     fun `properties overlay can move without moving selected node`() {
         val profile = SandboxDefaults.newProfile(null)
         val panel = renderedPanel(profile)

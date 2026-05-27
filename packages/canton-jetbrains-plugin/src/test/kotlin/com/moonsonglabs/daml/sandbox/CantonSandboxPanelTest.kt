@@ -1,8 +1,12 @@
 package com.moonsonglabs.daml.sandbox
 
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import com.intellij.ui.components.JBTextField
+import com.intellij.ui.table.JBTable
 import java.awt.Container
+import javax.swing.JLabel
 import javax.swing.JTabbedPane
+import javax.swing.table.DefaultTableModel
 
 class CantonSandboxPanelTest : BasePlatformTestCase() {
     fun `test panel constructs with default profile`() {
@@ -21,6 +25,9 @@ class CantonSandboxPanelTest : BasePlatformTestCase() {
         try {
             assertFalse(panel.containsTab("Explorer"))
             assertTrue(panel.containsTab("Topology"))
+            assertTrue(panel.containsTab("Nodes"))
+            assertTrue(panel.containsTab("DARs"))
+            assertTrue(panel.containsTab("Parties"))
             assertTrue(panel.containsTab("Logs"))
         } finally {
             panel.dispose()
@@ -31,7 +38,7 @@ class CantonSandboxPanelTest : BasePlatformTestCase() {
         val contents = CantonSandboxToolWindowFactory().createContents(project)
 
         try {
-            assertEquals(listOf("Designer", "Explorer"), contents.map { it.name })
+            assertEquals(listOf("Network", "Explorer"), contents.map { it.name })
             assertTrue(contents[0].component is CantonSandboxPanel)
             assertTrue(contents[1].component is LedgerExplorerPanel)
         } finally {
@@ -56,6 +63,73 @@ class CantonSandboxPanelTest : BasePlatformTestCase() {
         }
     }
 
+    fun `test network tables use topology themed surfaces`() {
+        val panel = CantonSandboxPanel(project)
+
+        try {
+            val participantTable = panel.privateField<JBTable>("participantTable")
+            val syncTable = panel.privateField<JBTable>("syncTable")
+
+            assertEquals(TopologyGraphTheme.panel, participantTable.background)
+            assertEquals(TopologyGraphTheme.panel, syncTable.background)
+            assertEquals(30, participantTable.rowHeight)
+            assertEquals(TopologyGraphTheme.warning, participantTable.tableHeader.foreground)
+        } finally {
+            panel.dispose()
+        }
+    }
+
+    fun `test network toolbar controls stay compact`() {
+        val panel = CantonSandboxPanel(project)
+
+        try {
+            val profileCombo = panel.privateField<ProfileComboBox>("profileCombo")
+            val nameField = panel.privateField<JBTextField>("nameField")
+            val portBaseField = panel.privateField<JBTextField>("portBaseField")
+
+            assertEquals(34, profileCombo.preferredSize.height)
+            assertEquals(34, nameField.preferredSize.height)
+            assertEquals(34, portBaseField.preferredSize.height)
+        } finally {
+            panel.dispose()
+        }
+    }
+
+    fun `test network renderers map participants syncs connections and dar warnings`() {
+        val panel = CantonSandboxPanel(project)
+
+        try {
+            val participantTable = panel.privateField<JBTable>("participantTable")
+            val syncTable = panel.privateField<JBTable>("syncTable")
+            val connectionTable = panel.privateField<JBTable>("connectionTable")
+            val darTable = panel.privateField<JBTable>("darTable")
+            val darModel = panel.privateField<DefaultTableModel>("darModel")
+
+            val participant = participantTable.renderedLabel(0, 0)
+            assertEquals(networkParticipantColor(), participant.foreground)
+
+            val sync = syncTable.renderedLabel(0, 0)
+            assertEquals(networkSyncColor(SandboxDefaults.SHARED_SYNCHRONIZER_NAME), sync.foreground)
+
+            val connected = connectionTable.renderedLabel(0, 2)
+            assertEquals("connected", connected.text)
+            assertEquals(networkConnectionColor(true), connected.foreground)
+
+            darModel.addRow(arrayOf("broken.dar", "broken", "", "", "", "inspect failed"))
+            val warning = darTable.renderedLabel(darTable.rowCount - 1, 5)
+            assertEquals(networkDarInspectColor("inspect failed"), warning.foreground)
+        } finally {
+            panel.dispose()
+        }
+    }
+
+    fun `test network log severity colors are deterministic`() {
+        assertEquals(TopologyGraphTheme.syncBorder, networkLogLineColor("participant started and SERVING"))
+        assertEquals(TopologyGraphTheme.warning, networkLogLineColor("WARN port already in use"))
+        assertEquals(java.awt.Color(0xFF5C7A), networkLogLineColor("ERROR failed to start"))
+        assertEquals(TopologyGraphTheme.detail, networkLogLineColor("plain canton output"))
+    }
+
     private inline fun <reified T> Any.privateField(name: String): T {
         val field = javaClass.getDeclaredField(name)
         field.isAccessible = true
@@ -76,5 +150,10 @@ class CantonSandboxPanelTest : BasePlatformTestCase() {
             }
         }
         return components.filterIsInstance<Container>().any { it.containsTab(title) }
+    }
+
+    private fun JBTable.renderedLabel(row: Int, column: Int): JLabel {
+        val renderer = getCellRenderer(row, column)
+        return renderer.getTableCellRendererComponent(this, getValueAt(row, column), false, false, row, column) as JLabel
     }
 }

@@ -128,12 +128,12 @@
 	        <toolWindow id="DAML Script Results"
 	                    anchor="bottom"
 	                    factoryClass="com.moonsonglabs.daml.scriptresults.ScriptResultsToolWindowFactory"
-	                    icon="com.moonsonglabs.daml.DamlIcons.ToolWindow"/>
+	                    icon="com.moonsonglabs.daml.DamlIcons.WhiteToolWindow"/>
 
 	        <toolWindow id="Managed Canton Sandboxes"
 	                    anchor="right"
 	                    factoryClass="com.moonsonglabs.daml.sandbox.CantonSandboxToolWindowFactory"
-	                    icon="com.moonsonglabs.daml.DamlIcons.ToolWindow"/>
+	                    icon="com.moonsonglabs.daml.DamlIcons.WhiteToolWindow"/>
 
 	        <notificationGroup id="DAML" displayType="BALLOON"/>
 

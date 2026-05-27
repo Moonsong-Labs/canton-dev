@@ -16,7 +16,7 @@ import javax.swing.BorderFactory
 import javax.swing.JPanel
 
 internal const val SANDBOX_TOOL_WINDOW_ID = "Managed Canton Sandboxes"
-internal const val SANDBOX_DESIGNER_CONTENT_NAME = "Designer"
+internal const val SANDBOX_DESIGNER_CONTENT_NAME = "Network"
 internal const val SANDBOX_EXPLORER_CONTENT_NAME = "Explorer"
 
 internal data class SandboxToolWindowContent(
