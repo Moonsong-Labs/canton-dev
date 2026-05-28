@@ -37,7 +37,7 @@ object DamlChoiceNames {
 
     fun useAt(text: String, offset: Int): ChoiceUse? {
         if (text.isEmpty()) return null
-        if (!isCodePosition(text, offset)) return null
+        if (!DamlModuleNames.isCodePosition(text, offset)) return null
         val token = identifierAt(text, offset) ?: return null
         if (!token.name.first().isUpperCase()) return null
         if (token.endOffset < text.length && text[token.endOffset] == '.') return null
@@ -105,20 +105,6 @@ object DamlChoiceNames {
             .replace(Regex("""@[A-Za-z_][A-Za-z0-9_'.]*"""), " ")
             .replace(Regex("""(?:[A-Za-z_][A-Za-z0-9_']*\.)+$"""), "")
         return Regex("""[A-Za-z0-9_')\]}][\s\n]+$""").containsMatchIn(withoutTypeApplications)
-    }
-
-    private fun isCodePosition(text: String, offset: Int): Boolean {
-        val lineStart = text.lastIndexOf('\n', (offset - 1).coerceAtLeast(0)).let { if (it == -1) 0 else it + 1 }
-        var inString = false
-        var cursor = lineStart
-        while (cursor < offset && cursor < text.length) {
-            val c = text[cursor]
-            val next = text.getOrNull(cursor + 1)
-            if (!inString && c == '-' && next == '-') return false
-            if (c == '"' && (cursor == 0 || text[cursor - 1] != '\\')) inString = !inString
-            cursor++
-        }
-        return !inString
     }
 
     private fun isIdentifierPart(c: Char): Boolean =

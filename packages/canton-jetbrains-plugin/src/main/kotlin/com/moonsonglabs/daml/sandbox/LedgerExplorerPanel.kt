@@ -5,7 +5,6 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.util.Disposer
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBList
@@ -233,7 +232,6 @@ class LedgerExplorerPanel(
     private val profileComboModel = DefaultComboBoxModel<SandboxProfile>()
     private val profileCombo = ProfileComboBox(profileComboModel) { deleteProfile(it) }
     private val participantSelector = ExplorerStringSelector(ExplorerTheme.participant)
-    private val topologyPill = ExplorerPill("0 PN / 0 SD", ExplorerTheme.border, filled = false)
     private val offsetPill = ExplorerPill("Offset -", ExplorerTheme.border, filled = false)
     private val searchField = JBTextField()
     private val participantModel = DefaultListModel<String>()
@@ -269,7 +267,6 @@ class LedgerExplorerPanel(
     }
     private val selectedStatusPill = ExplorerPill("No selection", ExplorerTheme.border, filled = false)
     private val timeline = NetworkActivityTimelinePanel()
-    private val advancedButton = iconButton("Request", AllIcons.Actions.Execute) { openAdvancedRequest() }
     private val copyButton = iconButton("Copy", AllIcons.Actions.Copy) { copySelectedRaw() }
     private val sidebarSlot = JPanel(BorderLayout()).apply {
         isOpaque = false
@@ -283,7 +280,6 @@ class LedgerExplorerPanel(
     private var visibleRows: List<ExplorerActivityRow> = emptyList()
     private var selectedRow: ExplorerActivityRow? = null
     private var selectedSegment = "Active"
-    private var tokenOverride = ""
     private var updatingProfile = false
     private var updatingFilters = false
     private var sidebarExpanded = false
@@ -333,7 +329,6 @@ class LedgerExplorerPanel(
             updatingFilters = false
         }
         if (!sidebarExpanded) updateSidebar()
-        topologyPill.setStatus("${next.participants.size} PN / ${next.synchronizers.size} SD", ExplorerTheme.participant, false)
         if (currentSnapshotProfileId != null && currentSnapshotProfileId != next.id ||
             currentSnapshot?.participantName !in next.participants.map { it.name }.toSet()
         ) {
@@ -370,7 +365,7 @@ class LedgerExplorerPanel(
         val current = profile ?: return
         val participantName = participantList.selectedValue ?: current.participants.firstOrNull()?.name ?: return
         val profileId = current.id
-        val token = tokenOverride
+        val token = ""
         val requestId = ++refreshSequence
         messageLabel.text = "Refreshing $participantName ledger data..."
         clearInspector("Loading ledger data for $participantName.")
@@ -605,11 +600,9 @@ class LedgerExplorerPanel(
     private fun configureActions() {
         segmentTabs.onSelectionChanged = {
             selectedSegment = it
-            advancedButton.isVisible = it == "Raw"
             applyFilters()
         }
         listOf(activeSwitch, archivedSwitch, eventsSwitch).forEach { it.onChanged = { applyFilters() } }
-        advancedButton.isVisible = false
         searchField.emptyText.text = "contract, party, template..."
         searchField.toolTipText = "Search contract, party, synchronizer, package, template, or argument"
     }
@@ -646,11 +639,10 @@ class LedgerExplorerPanel(
                 preferredSize = Dimension(152, 34)
                 minimumSize = Dimension(118, 34)
             }, constraints(2))
-            add(topologyPill.apply { preferredSize = Dimension(112, 34) }, constraints(3))
-            add(offsetPill.apply { preferredSize = Dimension(92, 34) }, constraints(4))
+            add(offsetPill.apply { preferredSize = Dimension(92, 34) }, constraints(3))
             add(iconButton("Refresh", AllIcons.Actions.Refresh) { refresh() }.apply {
                 preferredSize = Dimension(104, 34)
-            }, constraints(5))
+            }, constraints(4))
             add(searchField.apply {
                 preferredSize = Dimension(280, 34)
                 minimumSize = Dimension(140, 34)
@@ -660,7 +652,7 @@ class LedgerExplorerPanel(
                     RoundedLineBorder(ExplorerTheme.border, 8),
                     JBUI.Borders.empty(4, 10)
                 )
-            }, constraints(6, weightx = 1.0, fill = GridBagConstraints.HORIZONTAL))
+            }, constraints(5, weightx = 1.0, fill = GridBagConstraints.HORIZONTAL))
         }
 
     private fun explorerSurface(): JComponent =
@@ -760,7 +752,6 @@ class LedgerExplorerPanel(
                 add(JBLabel("Contract Details").styledTitle(), BorderLayout.WEST)
                 add(JPanel(FlowLayout(FlowLayout.RIGHT, 4, 0)).apply {
                     isOpaque = false
-                    add(advancedButton)
                     add(selectedStatusPill)
                 }, BorderLayout.EAST)
             }, BorderLayout.NORTH)
@@ -952,11 +943,6 @@ class LedgerExplorerPanel(
         val raw = rawArea.text.takeIf { it.isNotBlank() } ?: return
         CopyPasteManager.getInstance().setContents(StringSelection(raw))
         messageLabel.text = "Copied raw JSON"
-    }
-
-    private fun openAdvancedRequest() {
-        val current = profile ?: return
-        AdvancedRequestDialog(project, current, sessions, pulseFlow, tokenOverride) { tokenOverride = it }.show()
     }
 
     private fun refreshProfileCombo(selected: SandboxProfile) {
@@ -1465,7 +1451,6 @@ private class ActivityCellRenderer : DefaultTableCellRenderer() {
         column: Int
     ): Component {
         val label = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column) as JLabel
-        val explorerTable = table as? ActivityTable
         val modelValue = value?.toString().orEmpty()
         label.isOpaque = true
         label.border = BorderFactory.createCompoundBorder(
@@ -1492,7 +1477,6 @@ private class ActivityCellRenderer : DefaultTableCellRenderer() {
             }
         }
         label.toolTipText = modelValue
-        explorerTable?.let { }
         return label
     }
 }
@@ -1879,138 +1863,6 @@ private open class RoundedLineBorder(private val color: Color, private val radiu
         return insets
     }
 }
-
-private class AdvancedRequestDialog(
-    project: Project,
-    private val profile: SandboxProfile,
-    private val sessions: SandboxSessionService,
-    private val pulseFlow: () -> Unit,
-    initialToken: String,
-    private val onTokenChanged: (String) -> Unit
-) : DialogWrapper(project) {
-    private val participantCombo = JComboBox<String>()
-    private val methodCombo = JComboBox(arrayOf("GET", "POST", "PUT", "DELETE"))
-    private val presetCombo = JComboBox(arrayOf("Parties", "Packages", "Ledger end", "Create party"))
-    private val pathField = JBTextField("/v2/parties")
-    private val tokenArea = JBTextArea(2, 44).apply { text = initialToken }
-    private val bodyArea = JBTextArea(8, 44)
-    private val responseArea = JBTextArea(10, 44).apply {
-        isEditable = false
-        lineWrap = false
-        font = Font(Font.MONOSPACED, Font.PLAIN, 12)
-    }
-
-    init {
-        title = "Advanced JSON API Request"
-        setOKButtonText("Close")
-        participantCombo.model = DefaultComboBoxModel(profile.participants.map { it.name }.toTypedArray())
-        presetCombo.addActionListener { applyPreset(presetCombo.selectedItem as? String) }
-        applyPreset("Parties")
-        init()
-    }
-
-    override fun doOKAction() {
-        onTokenChanged(tokenArea.text.trim())
-        super.doOKAction()
-    }
-
-    override fun createCenterPanel(): JComponent =
-        JPanel(BorderLayout(6, 6)).apply {
-            preferredSize = Dimension(760, 560)
-            add(row(
-                JLabel("Preset"),
-                presetCombo,
-                JLabel("Participant"),
-                participantCombo,
-                JLabel("Method"),
-                methodCombo,
-                JButton("Send", AllIcons.Actions.Execute).apply { addActionListener { send() } }
-            ), BorderLayout.NORTH)
-            add(JPanel(GridBagLayout()).apply {
-                var y = 0
-                addLabeled("Path", pathField, y++)
-                addLabeled("Token", JBScrollPane(tokenArea), y++)
-                addLabeled("Body", JBScrollPane(bodyArea), y++)
-                addLabeled("Response", JBScrollPane(responseArea), y++)
-            }, BorderLayout.CENTER)
-        }
-
-    private fun send() {
-        val endpoint = selectedJsonEndpoint() ?: return
-        val method = methodCombo.selectedItem as? String ?: "GET"
-        val path = pathField.text.trim()
-        val token = tokenArea.text.trim()
-        val body = bodyArea.text
-        onTokenChanged(token)
-        responseArea.text = "Sending $method $path..."
-        pulseFlow()
-        ApplicationManager.getApplication().executeOnPooledThread {
-            val response = runCatching {
-                sessions.runJsonRequest(endpoint, method, path, token, body)
-            }.fold(
-                onSuccess = { "HTTP ${it.status}\n\n${it.body}" },
-                onFailure = { "Request failed: ${it.message}" }
-            )
-            SwingUtilities.invokeLater {
-                pulseFlow()
-                responseArea.text = response
-                responseArea.caretPosition = 0
-            }
-        }
-    }
-
-    private fun selectedJsonEndpoint(): Endpoint? {
-        val selectedName = participantCombo.selectedItem as? String ?: return null
-        return EndpointBuilder.participantEndpoints(profile).firstOrNull { it.nodeName == selectedName && it.kind == "json" }
-    }
-
-    private fun applyPreset(preset: String?) {
-        when (preset) {
-            "Packages" -> {
-                methodCombo.selectedItem = "GET"
-                pathField.text = "/v2/packages"
-                bodyArea.text = ""
-            }
-            "Ledger end" -> {
-                methodCombo.selectedItem = "GET"
-                pathField.text = "/v2/state/ledger-end"
-                bodyArea.text = ""
-            }
-            "Create party" -> {
-                methodCombo.selectedItem = "POST"
-                pathField.text = "/v2/parties"
-                bodyArea.text = """{"identityProviderId":"","localMetadata":null,"partyIdHint":"Carol"}"""
-            }
-            else -> {
-                methodCombo.selectedItem = "GET"
-                pathField.text = "/v2/parties"
-                bodyArea.text = ""
-            }
-        }
-    }
-
-    private fun JPanel.addLabeled(label: String, component: JComponent, y: Int) {
-        val labelConstraints = GridBagConstraints().apply {
-            gridx = 0
-            gridy = y
-            anchor = GridBagConstraints.WEST
-            insets = Insets(3, 2, 3, 8)
-        }
-        val fieldConstraints = GridBagConstraints().apply {
-            gridx = 1
-            gridy = y
-            fill = GridBagConstraints.BOTH
-            weightx = 1.0
-            weighty = if (label == "Response") 1.0 else 0.0
-            insets = Insets(3, 2, 3, 2)
-        }
-        add(JLabel(label), labelConstraints)
-        add(component, fieldConstraints)
-    }
-}
-
-private fun row(vararg components: JComponent): JPanel =
-    JPanel(FlowLayout(FlowLayout.LEFT, 6, 0)).apply { components.forEach(::add) }
 
 private fun interface SimpleDocumentListener : javax.swing.event.DocumentListener {
     fun update()

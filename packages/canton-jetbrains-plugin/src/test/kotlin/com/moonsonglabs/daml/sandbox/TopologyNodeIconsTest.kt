@@ -6,15 +6,13 @@ import org.junit.Test
 
 class TopologyNodeIconsTest {
     @Test
-    fun `each topology node category has a distinct icon`() {
+    fun `each visible topology node category has a distinct icon`() {
         val icons = listOf(
             TopologyNodeIcons.PARTICIPANT,
-            TopologyNodeIcons.SYNCHRONIZER,
-            TopologyNodeIcons.SEQUENCER,
-            TopologyNodeIcons.MEDIATOR
+            TopologyNodeIcons.SYNCHRONIZER
         )
 
-        assertEquals(4, icons.distinct().size)
+        assertEquals(2, icons.distinct().size)
         assertTrue(icons.all { it.isNotBlank() })
     }
 

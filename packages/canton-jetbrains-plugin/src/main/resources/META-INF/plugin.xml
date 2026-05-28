@@ -22,6 +22,13 @@
     ]]></description>
 
     <change-notes><![CDATA[
+        <h3>0.3.0</h3>
+        <ul>
+          <li>Added the Managed Canton Sandboxes Network and Explorer views for local multi-participant Canton profiles.</li>
+          <li>Added editable topology diagrams, local Canton generation/launching, endpoint consoles, and ledger activity exploration.</li>
+          <li>Improved DAML navigation, choice usages, local binding resolution, and native highlighting.</li>
+          <li>Reduced generated sandbox output to the files required for reproducible local runs.</li>
+        </ul>
         <h3>0.2.0</h3>
         <ul>
           <li>Redesigned DAML Script Results as an explorer with Overview, Contracts, Tx Tree, Disclosure, Console, and Raw views.</li>
@@ -41,8 +48,6 @@
 	    <depends>org.jetbrains.plugins.yaml</depends>
 	    <depends>com.redhat.devtools.lsp4ij</depends>
 	    <depends>org.jetbrains.plugins.terminal</depends>
-    <depends optional="true" config-file="daml-textmate.xml">org.jetbrains.plugins.textmate</depends>
-
     <resource-bundle>messages.DamlBundle</resource-bundle>
 
     <extensions defaultExtensionNs="com.intellij">
@@ -84,7 +89,7 @@
                                    implementationClass="com.redhat.devtools.lsp4ij.features.signatureHelp.LSPParameterInfoHandler"/>
 
         <lang.psiStructureViewFactory language="DAML"
-                                      implementationClass="com.redhat.devtools.lsp4ij.features.documentSymbol.LSPDocumentSymbolStructureViewFactory"/>
+                                      implementationClass="com.moonsonglabs.daml.structure.DamlStructureViewFactory"/>
 
         <psi.referenceContributor language="DAML"
                                   implementation="com.moonsonglabs.daml.navigation.DamlModuleReferenceContributor"
@@ -169,10 +174,7 @@
         <action id="DAML.OpenDocs"
                 class="com.moonsonglabs.daml.actions.OpenDamlDocsAction"
                 text="Open DAML Documentation"
-                description="Open the DAML documentation site in your browser">
-            <keyboard-shortcut keymap="$default" first-keystroke="meta F1"/>
-            <keyboard-shortcut keymap="$default" first-keystroke="ctrl F1"/>
-        </action>
+                description="Open the DAML documentation site in your browser"/>
 	        <action id="DAML.RestartServer"
 	                class="com.moonsonglabs.daml.actions.RestartServerAction"
 	                text="Restart DAML Language Server"

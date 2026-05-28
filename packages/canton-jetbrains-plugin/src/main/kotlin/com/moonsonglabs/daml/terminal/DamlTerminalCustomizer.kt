@@ -22,13 +22,18 @@ class DamlTerminalCustomizer : LocalTerminalCustomizer() {
 
     companion object {
         fun prependLocalToolPath(settings: DamlProjectSettings?, envs: MutableMap<String, String>) {
-            val toolDirs = RuntimeEnvironment.localToolDirectories(settings)
+            val toolDirs = RuntimeEnvironment.localToolAndJavaDirectories(settings)
             val pathKey = envs.keys.firstOrNull { it.equals("PATH", ignoreCase = SystemInfo.isWindows) } ?: "PATH"
             val basePath = envs[pathKey] ?: System.getenv("PATH").orEmpty()
             envs[pathKey] = RuntimeEnvironment.buildPath(
                 toolDirs,
                 basePath
             )
+            RuntimeEnvironment.ideJavaHome()?.let { javaHome ->
+                val javaHomeKey = envs.keys.firstOrNull { it.equals("JAVA_HOME", ignoreCase = SystemInfo.isWindows) }
+                    ?: "JAVA_HOME"
+                envs[javaHomeKey] = javaHome.toString()
+            }
             envs["_INTELLIJ_FORCE_PREPEND_PATH"] = terminalShellIntegrationPathPrefix(toolDirs, envs["_INTELLIJ_FORCE_PREPEND_PATH"])
         }
 

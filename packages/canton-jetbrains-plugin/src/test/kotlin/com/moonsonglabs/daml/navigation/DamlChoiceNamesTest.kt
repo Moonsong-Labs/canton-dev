@@ -68,6 +68,18 @@ test = script do
         assertNull(commentMention)
     }
 
+    @Test
+    fun `ignores exercise-looking choices inside block comments`() {
+        val text = """
+test = script do
+  {- exerciseCmd offerCid Accept -}
+  pure ()
+""".trimIndent()
+
+        assertNull(DamlChoiceNames.useAt(text, text.indexOf("Accept")))
+        assertEquals(emptyList<DamlChoiceNames.ChoiceUse>(), DamlChoiceNames.uses(text))
+    }
+
     private val privateSettlementSnippet = """
 module PrivateSettlement where
 

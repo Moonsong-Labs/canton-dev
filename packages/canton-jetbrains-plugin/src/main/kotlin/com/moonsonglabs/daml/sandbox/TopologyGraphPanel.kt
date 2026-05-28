@@ -40,18 +40,11 @@ internal object TopologyGraphTheme {
     val syncBorder = Color(0x31FF9C)
     val globalSyncFill = Color(0x2B1E32)
     val globalSyncBorder = Color(0xFF9F43)
-    val sequencerFill = Color(0x352A13)
-    val sequencerBorder = Color(0xFFE66D)
-    val mediatorFill = Color(0x2A1735)
-    val mediatorBorder = Color(0xFF4FD8)
-
     fun fill(selection: TopologyGraphPanel.Selection): Color =
         when (selection) {
             is TopologyGraphPanel.Selection.Participant -> participantFill
             is TopologyGraphPanel.Selection.Synchronizer ->
                 if (SandboxDefaults.isSharedSynchronizer(selection.id)) globalSyncFill else syncFill
-            is TopologyGraphPanel.Selection.Sequencer -> sequencerFill
-            is TopologyGraphPanel.Selection.Mediator -> mediatorFill
         }
 
     fun border(selection: TopologyGraphPanel.Selection): Color =
@@ -59,8 +52,6 @@ internal object TopologyGraphTheme {
             is TopologyGraphPanel.Selection.Participant -> participantBorder
             is TopologyGraphPanel.Selection.Synchronizer ->
                 if (SandboxDefaults.isSharedSynchronizer(selection.id)) globalSyncBorder else syncBorder
-            is TopologyGraphPanel.Selection.Sequencer -> sequencerBorder
-            is TopologyGraphPanel.Selection.Mediator -> mediatorBorder
         }
 
     fun cornerRadius(selection: TopologyGraphPanel.Selection): Float =
@@ -90,8 +81,6 @@ class TopologyGraphPanel : JPanel() {
     sealed class Selection {
         data class Participant(val id: String) : Selection()
         data class Synchronizer(val id: String) : Selection()
-        data class Sequencer(val id: String) : Selection()
-        data class Mediator(val id: String) : Selection()
     }
 
     private data class DrawNode(
@@ -678,11 +667,6 @@ class TopologyGraphPanel : JPanel() {
         when (node.selection) {
             is Selection.Participant -> drawPort(g2, node.rightPort(), border)
             is Selection.Synchronizer -> drawPort(g2, node.leftPort(), border)
-            is Selection.Sequencer,
-            is Selection.Mediator -> {
-                drawPort(g2, node.leftPort(), border)
-                drawPort(g2, node.rightPort(), border)
-            }
         }
     }
 
@@ -1056,7 +1040,6 @@ class TopologyGraphPanel : JPanel() {
         val candidate = when (node.selection) {
             is Selection.Participant -> node.rightPort()
             is Selection.Synchronizer -> node.leftPort()
-            else -> return null
         }
         val dx = px - candidate.first
         val dy = py - candidate.second
@@ -1074,8 +1057,6 @@ class TopologyGraphPanel : JPanel() {
         when (this) {
             is Selection.Participant -> id
             is Selection.Synchronizer -> id
-            is Selection.Sequencer -> id
-            is Selection.Mediator -> id
         }
 }
 
@@ -1231,8 +1212,6 @@ class TopologyComponentPalettePanel : JPanel() {
         val icon = when (entry.selection) {
             is TopologyGraphPanel.Selection.Participant -> TopologyNodeIcons.PARTICIPANT
             is TopologyGraphPanel.Selection.Synchronizer -> TopologyNodeIcons.SYNCHRONIZER
-            is TopologyGraphPanel.Selection.Sequencer -> TopologyNodeIcons.SEQUENCER
-            is TopologyGraphPanel.Selection.Mediator -> TopologyNodeIcons.MEDIATOR
         }
 
         if (isSelected || isHover) {

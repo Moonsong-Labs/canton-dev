@@ -272,4 +272,89 @@ template Strategy
 
         assertNull(DamlModuleResolver.getInstance(project).resolveSymbolReference(symbol, user.virtualFile))
     }
+
+    fun testCtrlClickChoiceControllerArgumentResolvesToChoiceField() {
+        val file = myFixture.configureByText(
+            DamlFileType,
+            """
+module Vault.IYieldSource where
+
+import Vault.Holding (Holding)
+
+interface IYieldSource where
+  viewtype ()
+
+  choice Allocate : ContractId IYieldSource
+    with
+      vault : Party
+      funds : ContractId Holding
+    controller vault
+    do pure this
+""".trimIndent()
+        )
+        myFixture.openFileInEditor(file.virtualFile)
+
+        val usageOffset = file.text.indexOf("vault", file.text.indexOf("controller"))
+        val declarationOffset = file.text.indexOf("vault : Party")
+        val usage = file.findElementAt(usageOffset)!!
+        val expected = file.findElementAt(declarationOffset)!!
+        val symbol = DamlModuleNames.symbolAt(file.text, usageOffset)!!
+
+        assertEquals(expected, DamlModuleResolver.getInstance(project).resolveSymbolReference(symbol, file.virtualFile))
+        assertEquals(expected, DamlDirectNavigationProvider().getNavigationElement(usage))
+        assertEquals(expected, DamlGotoDeclarationHandler().getGotoDeclarationTargets(usage, usageOffset, myFixture.editor).orEmpty().single())
+        val actionTargets = GotoDeclarationAction.findAllTargetElements(project, myFixture.editor, usageOffset)
+        assertTrue(actionTargets.any { it == expected })
+    }
+
+    fun testTemplateFieldDoesNotLeakOutsideOwnerBlock() {
+        val file = myFixture.configureByText(
+            DamlFileType,
+            """
+module User where
+
+template Vault
+  with
+    owner : Party
+  where
+    signatory owner
+
+helper = owner
+""".trimIndent()
+        )
+
+        val offset = file.text.indexOf("owner", file.text.indexOf("helper"))
+        val symbol = DamlModuleNames.symbolAt(file.text, offset)!!
+
+        assertNull(DamlModuleResolver.getInstance(project).resolveSymbolReference(symbol, file.virtualFile))
+    }
+
+    fun testGotoDeclarationIgnoresStringsAndComments() {
+        myFixture.addFileToProject(
+            "vault-interface/daml/Vault/Component/KYCPolicy.daml",
+            """
+module Vault.Component.KYCPolicy where
+
+interface IKYCPolicy where
+  viewtype ()
+""".trimIndent()
+        )
+        val user = myFixture.configureByText(
+            DamlFileType,
+            """
+module User where
+
+import Vault.Component.KYCPolicy (IKYCPolicy)
+
+debugText = "IKYCPolicy"
+-- IKYCPolicy
+""".trimIndent()
+        )
+        myFixture.openFileInEditor(user.virtualFile)
+        val stringOffset = user.text.indexOf("IKYCPolicy", user.text.indexOf("\""))
+        val commentOffset = user.text.lastIndexOf("IKYCPolicy")
+
+        assertNull(DamlGotoDeclarationHandler().getGotoDeclarationTargets(user.findElementAt(stringOffset), stringOffset, myFixture.editor))
+        assertNull(DamlGotoDeclarationHandler().getGotoDeclarationTargets(user.findElementAt(commentOffset), commentOffset, myFixture.editor))
+    }
 }

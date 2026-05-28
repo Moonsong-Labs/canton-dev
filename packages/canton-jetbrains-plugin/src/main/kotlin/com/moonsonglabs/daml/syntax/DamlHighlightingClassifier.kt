@@ -127,7 +127,7 @@ object DamlHighlightingClassifier {
         if (tokenText == "this") return Role.THIS_REFERENCE
         if (tokenText == "self") return Role.PREDEFINED_VALUE
 
-        val localDeclarationRole = localDeclarationRole(line, lineOffset, tokenText)
+        val localDeclarationRole = localDeclarationRole(fileText, lineStart, line, lineOffset, tokenText)
         if (localDeclarationRole != null) return localDeclarationRole
 
         if (isTypeParameter(line, lineOffset, tokenText)) return Role.TYPE_PARAMETER
@@ -145,7 +145,7 @@ object DamlHighlightingClassifier {
         return null
     }
 
-    private fun localDeclarationRole(line: String, lineOffset: Int, tokenText: String): Role? {
+    private fun localDeclarationRole(fileText: String, lineStart: Int, line: String, lineOffset: Int, tokenText: String): Role? {
         if (!isValueIdentifier(tokenText)) return null
 
         val before = line.substring(0, lineOffset)
@@ -155,6 +155,7 @@ object DamlHighlightingClassifier {
         val leadingIndent = line.indexOfFirst { !it.isWhitespace() }.let { if (it == -1) line.length else it }
         val topLevel = leadingIndent == 0
         val declarationStart = beforeTrimmed.isEmpty()
+        val punnedFieldContext = declarationStart && isPunnedRecordFieldContext(fileText, lineStart, leadingIndent)
         val fieldStart = declarationStart ||
             beforeTrimmed.endsWith("with") ||
             beforeTrimmed.endsWith(";") ||
@@ -181,7 +182,7 @@ object DamlHighlightingClassifier {
             }
         }
 
-        if (declarationStart && !topLevel && afterTrimmed.isEmpty()) {
+        if (declarationStart && !topLevel && afterTrimmed.isEmpty() && punnedFieldContext) {
             return Role.FIELD_NAME
         }
 
@@ -192,6 +193,7 @@ object DamlHighlightingClassifier {
                     afterTrimmed.isEmpty()
                 )
         ) {
+            if (declarationStart && afterTrimmed.isEmpty() && !punnedFieldContext) return null
             return Role.FIELD_NAME
         }
 
@@ -200,6 +202,32 @@ object DamlHighlightingClassifier {
         }
 
         return null
+    }
+
+    private fun isPunnedRecordFieldContext(fileText: String, lineStart: Int, indent: Int): Boolean {
+        var cursor = lineStart - 1
+        while (cursor > 0) {
+            val previousLineEnd = cursor
+            val previousLineStart = fileText.lastIndexOf('\n', (previousLineEnd - 1).coerceAtLeast(0)).let {
+                if (it == -1) 0 else it + 1
+            }
+            val previousLine = fileText.substring(previousLineStart, previousLineEnd).trimEnd()
+            if (previousLine.isNotBlank()) {
+                val previousIndent = leadingIndent(previousLine)
+                val trimmed = previousLine.trim()
+                if (previousIndent < indent) return trimmed.endsWith("with")
+                if (previousIndent == indent &&
+                    !(identifierRegex.matches(trimmed) ||
+                        trimmed.contains("=") ||
+                        trimmed.endsWith(",") ||
+                        trimmed.endsWith(";"))
+                ) {
+                    return false
+                }
+            }
+            cursor = previousLineStart - 1
+        }
+        return false
     }
 
     private fun isTypeParameter(line: String, lineOffset: Int, tokenText: String): Boolean {

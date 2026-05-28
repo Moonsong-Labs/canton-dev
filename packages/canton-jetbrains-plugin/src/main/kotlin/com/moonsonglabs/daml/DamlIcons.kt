@@ -11,7 +11,4 @@ object DamlIcons {
 
     @JvmField
     val WhiteToolWindow = IconLoader.getIcon("/icons/daml-toolwindow-white.svg", DamlIcons::class.java)
-
-    @JvmField
-    val SandboxToolWindow = WhiteToolWindow
 }

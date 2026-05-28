@@ -156,6 +156,17 @@ depositCfgCid <- submit operator ${'$'} createCmd DC.Config with
     }
 
     @Test
+    fun `does not classify standalone do expressions as punned record fields`() {
+        val text = """
+test = script do
+  value <- pure True
+  value
+""".trimIndent()
+
+        assertEquals(null, DamlHighlightingClassifier.roleAt(text, text.lastIndexOf("value"), "value"))
+    }
+
+    @Test
     fun `classifies custom and native type references in signatures`() {
         val text = """
 template VaultConfig

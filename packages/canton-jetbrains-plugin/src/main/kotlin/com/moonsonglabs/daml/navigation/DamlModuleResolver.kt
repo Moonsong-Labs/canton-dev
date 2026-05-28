@@ -38,6 +38,9 @@ class DamlModuleResolver(private val project: Project) {
         }
 
         if (contextPsiFile != null && reference.qualifier == null) {
+            DamlLocalBindings.resolve(contextPsiFile.text, reference)?.let { binding ->
+                return contextPsiFile.findElementAt(binding.startOffset)
+            }
             resolveSymbolInFile(contextPsiFile.virtualFile, reference.name)?.let { return it }
         }
 
@@ -70,7 +73,7 @@ class DamlModuleResolver(private val project: Project) {
     private fun resolveSymbolDeclaration(moduleName: String, symbolName: String, contextFile: VirtualFile?): PsiElement? {
         val module = resolveModule(moduleName, contextFile) ?: return null
         val psiFile = PsiManager.getInstance(project).findFile(module.file) ?: return null
-        val declaration = DamlModuleNames.declarationNamed(psiFile.text, symbolName) ?: return null
+        val declaration = DamlModuleNames.navigableDeclarationNamed(psiFile.text, symbolName) ?: return null
         return psiFile.findElementAt(declaration.startOffset)
     }
 
@@ -113,7 +116,7 @@ class DamlModuleResolver(private val project: Project) {
 
     private fun resolveSymbolInFile(file: VirtualFile?, symbolName: String): PsiElement? {
         val psiFile = file?.let { PsiManager.getInstance(project).findFile(it) } ?: return null
-        val declaration = DamlModuleNames.declarationNamed(psiFile.text, symbolName) ?: return null
+        val declaration = DamlModuleNames.navigableDeclarationNamed(psiFile.text, symbolName) ?: return null
         return psiFile.findElementAt(declaration.startOffset)
     }
 

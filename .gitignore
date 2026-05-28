@@ -11,6 +11,7 @@
 
 # DAML/Canton generated files
 .daml/
+.canton-sandboxes/
 .build/
 log/
 navigator.log

@@ -18,7 +18,8 @@ class SandboxDockerIntegrationTest {
     fun `generated local recipe boots in Docker Canton runtime`() {
         assumeTrue(
             "Docker integration tests require -PrunDockerIntegration=true or RUN_DOCKER_INTEGRATION=true.",
-            System.getProperty("runDockerIntegration") == "true"
+            System.getProperty("runDockerIntegration") == "true" ||
+                System.getenv("RUN_DOCKER_INTEGRATION") == "true"
         )
         val docker = findExecutable("docker") ?: error("docker CLI not found")
         val image = System.getProperty("cantonDockerImage") ?: "canton-jetbrains-dev:latest"

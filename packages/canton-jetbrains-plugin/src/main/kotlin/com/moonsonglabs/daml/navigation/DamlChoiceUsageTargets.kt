@@ -5,7 +5,6 @@ import com.intellij.openapi.util.TextRange
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
 import com.moonsonglabs.daml.DamlFileType
-import com.moonsonglabs.daml.DamlTokenTypes
 
 internal data class DamlChoiceUsageTarget(
     val name: String,
@@ -23,9 +22,6 @@ internal object DamlChoiceUsageTargets {
 
         var current: PsiElement? = element
         while (current != null && current != file) {
-            if (current.node?.elementType == DamlTokenTypes.CHOICE_DECL) {
-                targetInside(file, current.textRange)?.let { return it }
-            }
             targetOnLine(file, current.textRange.startOffset)?.let { return it }
             current = current.parent
         }
@@ -61,11 +57,6 @@ internal object DamlChoiceUsageTargets {
         }
     }
 
-    private fun targetInside(file: PsiFile, range: TextRange): DamlChoiceUsageTarget? =
-        DamlChoiceNames.declarations(file.text)
-            .firstOrNull { it.startOffset in range.startOffset until range.endOffset }
-            ?.toTarget(file)
-
     private fun targetOnLine(file: PsiFile, offset: Int): DamlChoiceUsageTarget? {
         val text = file.text
         if (text.isEmpty()) return null
@@ -73,7 +64,10 @@ internal object DamlChoiceUsageTargets {
         val lineStart = text.lastIndexOf('\n', clamped).let { if (it == -1) 0 else it + 1 }
         val lineEnd = text.indexOf('\n', clamped).let { if (it == -1) text.length else it }
         return DamlChoiceNames.declarations(text)
-            .firstOrNull { it.startOffset in lineStart until lineEnd }
+            .firstOrNull {
+                it.startOffset in lineStart until lineEnd &&
+                    clamped in lineStart..(it.startOffset + it.name.length)
+            }
             ?.toTarget(file)
     }
 

@@ -16,7 +16,7 @@ import javax.swing.BorderFactory
 import javax.swing.JPanel
 
 internal const val SANDBOX_TOOL_WINDOW_ID = "Managed Canton Sandboxes"
-internal const val SANDBOX_DESIGNER_CONTENT_NAME = "Network"
+internal const val SANDBOX_NETWORK_CONTENT_NAME = "Network"
 internal const val SANDBOX_EXPLORER_CONTENT_NAME = "Explorer"
 
 internal data class SandboxToolWindowContent(
@@ -40,10 +40,10 @@ class CantonSandboxToolWindowFactory : ToolWindowFactory, DumbAware {
         listOf(
             runCatching {
                 val panel = CantonSandboxPanel(project)
-                SandboxToolWindowContent(SANDBOX_DESIGNER_CONTENT_NAME, panel, panel)
+                SandboxToolWindowContent(SANDBOX_NETWORK_CONTENT_NAME, panel, panel)
             }.getOrElse { error ->
-                thisLogger().error("Failed to create Managed Canton Sandboxes designer", error)
-                SandboxToolWindowContent(SANDBOX_DESIGNER_CONTENT_NAME, fallbackPanel(error), null)
+                thisLogger().error("Failed to create Managed Canton Sandboxes network view", error)
+                SandboxToolWindowContent(SANDBOX_NETWORK_CONTENT_NAME, fallbackPanel(error), null)
             },
             runCatching {
                 val panel = LedgerExplorerPanel(project)

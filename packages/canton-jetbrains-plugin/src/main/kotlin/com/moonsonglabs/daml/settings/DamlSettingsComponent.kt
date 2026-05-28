@@ -9,6 +9,7 @@ import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.FormBuilder
 import com.moonsonglabs.daml.DamlBundle
+import com.moonsonglabs.daml.runtime.RuntimeEnvironment
 import com.moonsonglabs.daml.sdk.DamlSdkInstaller
 import com.moonsonglabs.daml.sdk.DamlSdkVersions
 import java.awt.BorderLayout
@@ -43,7 +44,10 @@ class DamlSettingsComponent(private val project: Project) {
         }
     }
 
-    val useDPMCheckbox = JBCheckBox(DamlBundle.message("daml.settings.useDPM.label"))
+    val dpmBinaryPathField = JBTextField().apply {
+        isEditable = false
+        toolTipText = DamlBundle.message("daml.settings.dpmBinaryPath.tooltip")
+    }
 
     private val installDpmButton = JButton(DamlBundle.message("daml.settings.installDpm.button")).apply {
         toolTipText = DamlBundle.message("daml.settings.installDpm.tooltip")
@@ -51,13 +55,13 @@ class DamlSettingsComponent(private val project: Project) {
             runtimeStatusLabel.text = "Installing DPM CLI..."
             DamlSdkInstaller.getInstance(project).installDpmCli { status ->
                 runtimeStatusLabel.text = status
-                useDPMCheckbox.isSelected = true
+                updateDpmBinaryPath()
             }
         }
     }
 
     private val dpmPanel = JPanel(BorderLayout(6, 0)).apply {
-        add(useDPMCheckbox, BorderLayout.CENTER)
+        add(dpmBinaryPathField, BorderLayout.CENTER)
         add(installDpmButton, BorderLayout.EAST)
     }
 
@@ -111,7 +115,7 @@ class DamlSettingsComponent(private val project: Project) {
         .addLabeledComponent(DamlBundle.message("daml.settings.runtimeStatus.label"), runtimeStatusLabel, 1, false)
         .addLabeledComponent(DamlBundle.message("daml.settings.binaryPath.label"), binaryPathField, 1, false)
         .addLabeledComponent(DamlBundle.message("daml.settings.cantonBinaryPath.label"), cantonBinaryPathField, 1, false)
-        .addComponent(dpmPanel, 1)
+        .addLabeledComponent(DamlBundle.message("daml.settings.dpmBinaryPath.label"), dpmPanel, 1, false)
         .addLabeledComponent(DamlBundle.message("daml.settings.logLevel.label"), logLevelCombo, 1, false)
         .addLabeledComponent(DamlBundle.message("daml.settings.telemetry.label"), telemetryCombo, 1, false)
         .addLabeledComponent(DamlBundle.message("daml.settings.extraArguments.label"), extraArgsField, 1, false)
@@ -126,7 +130,7 @@ class DamlSettingsComponent(private val project: Project) {
         runtimeStatusLabel.text = s.lastRuntimeValidation
         binaryPathField.text = s.binaryPath
         cantonBinaryPathField.text = s.cantonBinaryPath
-        useDPMCheckbox.isSelected = s.useDPMWhenAvailable
+        updateDpmBinaryPath()
         logLevelCombo.selectedItem = s.logLevel
         telemetryCombo.selectedIndex = telemetryToIndex(s.telemetry)
         autorunCheckbox.isSelected = s.autorunAllTests
@@ -139,7 +143,7 @@ class DamlSettingsComponent(private val project: Project) {
         s.selectedSdkVersion = selectedSdkVersion()
         s.binaryPath = binaryPathField.text.trim()
         s.cantonBinaryPath = cantonBinaryPathField.text.trim()
-        s.useDPMWhenAvailable = useDPMCheckbox.isSelected
+        s.useDPMWhenAvailable = true
         s.logLevel = (logLevelCombo.selectedItem as? String) ?: "info"
         s.telemetry = indexToTelemetry(telemetryCombo.selectedIndex)
         s.autorunAllTests = autorunCheckbox.isSelected
@@ -152,7 +156,6 @@ class DamlSettingsComponent(private val project: Project) {
         selectedSdkVersion() != s.selectedSdkVersion
             || binaryPathField.text.trim() != s.binaryPath
             || cantonBinaryPathField.text.trim() != s.cantonBinaryPath
-            || useDPMCheckbox.isSelected != s.useDPMWhenAvailable
             || logLevelCombo.selectedItem != s.logLevel
             || indexToTelemetry(telemetryCombo.selectedIndex) != s.telemetry
             || autorunCheckbox.isSelected != s.autorunAllTests
@@ -164,6 +167,13 @@ class DamlSettingsComponent(private val project: Project) {
         (sdkVersionCombo.editor.item as? String)?.trim()
             ?.ifBlank { DamlSdkVersions.DEFAULT }
             ?: DamlSdkVersions.DEFAULT
+
+    private fun updateDpmBinaryPath() {
+        dpmBinaryPathField.text = RuntimeEnvironment.findExecutable(
+            "dpm",
+            DamlProjectSettings.getInstance(project)
+        )?.toString() ?: "Not found"
+    }
 
     private fun telemetryToIndex(t: String): Int = when (t) {
         "opt-in" -> 1

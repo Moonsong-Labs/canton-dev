@@ -14,10 +14,9 @@ class SandboxGenerator {
         val localDir = root.resolve("local")
         val scriptsDir = root.resolve("scripts")
         val darsDir = root.resolve("dars")
-        val logsDir = root.resolve("logs")
-        val dataDir = root.resolve("data")
-        listOf(localDir, scriptsDir, darsDir, logsDir, dataDir).forEach(Files::createDirectories)
-        clearDirectory(darsDir)
+        val logsDir = localDir.resolve("log")
+        listOf(localDir, scriptsDir).forEach(Files::createDirectories)
+        deleteLegacyGeneratedDirs(root)
 
         val copiedDars = copyAssignedDars(profile, darsDir)
         val profileJson = root.resolve("profile.json")
@@ -77,7 +76,7 @@ class SandboxGenerator {
         appendLine("""HERE="$(cd "$(dirname "${'$'}{BASH_SOURCE[0]}")" && pwd)"""")
         appendLine("""CONF="${'$'}HERE/canton.conf"""")
         appendLine("""BOOT="${'$'}HERE/bootstrap.canton"""")
-        appendLine("""LOG_DIR="${'$'}HERE/../logs"""")
+        appendLine("""LOG_DIR="${'$'}HERE/log"""")
         appendLine("""SDK_VERSION="${'$'}{CANTON_SDK_VERSION:-3.4.11}"""")
         appendLine("""CANTON_JAR_DEFAULT="${'$'}HOME/.daml/sdk/${'$'}SDK_VERSION/canton/canton.jar"""")
         appendLine("""CANTON_DPM_JAR_DEFAULT="${'$'}HOME/.dpm/cache/components/canton-enterprise/${'$'}SDK_VERSION/lib/canton-enterprise-${'$'}SDK_VERSION.jar"""")
@@ -247,14 +246,23 @@ class SandboxGenerator {
     }
 
     private fun copyAssignedDars(profile: SandboxProfile, darsDir: Path): Map<String, Path> {
+        if (Files.exists(darsDir)) clearDirectory(darsDir)
+        val assignedDars = profile.darAssignments.map { it.darPath }.distinct()
+        if (assignedDars.isEmpty()) {
+            darsDir.toFile().deleteRecursively()
+            return emptyMap()
+        }
+
         val copied = linkedMapOf<String, Path>()
-        profile.darAssignments.map { it.darPath }.distinct().forEach { rawPath ->
+        assignedDars.forEach { rawPath ->
             val source = Path.of(rawPath)
             if (!Files.isRegularFile(source)) return@forEach
+            Files.createDirectories(darsDir)
             val target = uniqueDarTarget(darsDir, source.name)
             Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING)
             copied[rawPath] = target
         }
+        if (copied.isEmpty()) darsDir.toFile().deleteRecursively()
         return copied
     }
 
@@ -282,7 +290,24 @@ class SandboxGenerator {
     }
 
     private fun writeGeneratedGitignore(root: Path) {
-        Files.writeString(root.resolve(".gitignore"), "data/\nlogs/\n*.log\n")
+        Files.writeString(
+            root.resolve(".gitignore"),
+            """
+            |dars/
+            |local/log/
+            |data/
+            |logs/
+            |participants.json
+            |parties.json
+            |run-*-output.json
+            |*.log
+            |""".trimMargin()
+        )
+    }
+
+    private fun deleteLegacyGeneratedDirs(root: Path) {
+        root.resolve("logs").toFile().deleteRecursively()
+        root.resolve("data").toFile().deleteRecursively()
     }
 
     private fun scalaString(value: String): String =

@@ -74,6 +74,21 @@ import Vault.Component.KYCPolicy (IKYCPolicy, VKYCPolicy(..))
     }
 
     @Test
+    fun `ignores symbols inside comments and strings`() {
+        val text = """
+module User where
+
+debugText = "IKYCPolicy"
+-- IKYCPolicy
+{- exerciseCmd cid RouteDeposit -}
+""".trimIndent()
+
+        assertNull(DamlModuleNames.symbolAtOrNear(text, text.indexOf("IKYCPolicy")))
+        assertNull(DamlModuleNames.symbolAtOrNear(text, text.lastIndexOf("IKYCPolicy")))
+        assertNull(DamlModuleNames.symbolAtOrNear(text, text.indexOf("RouteDeposit")))
+    }
+
+    @Test
     fun `finds interface declaration`() {
         val text = """
 module Vault.Deposit.Processor where

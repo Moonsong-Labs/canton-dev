@@ -4,7 +4,7 @@ DAML language support for JetBrains IDEs (IntelliJ IDEA Community/Ultimate, WebS
 
 ## Status
 
-v0.1 — local-install beta. Builds a `.zip` artifact suitable for **Settings → Plugins → ⚙ → Install Plugin from Disk…**. No Marketplace publishing yet.
+v0.3 — local-install beta. Builds a `.zip` artifact suitable for **Settings → Plugins → ⚙ → Install Plugin from Disk…**. No Marketplace publishing yet.
 
 ## Super Quick Start
 
@@ -28,7 +28,7 @@ Use this path when you want to test the plugin in your local JetBrains IDE with 
    ./gradlew buildPlugin
    ```
 
-4. Install `build/distributions/canton-jetbrains-plugin-0.1.0.zip` in your IDE:
+4. Install `build/distributions/canton-jetbrains-plugin-0.3.0.zip` in your IDE:
    - Open **Settings / Preferences → Plugins**.
    - Click the gear icon.
    - Choose **Install Plugin from Disk…**.
@@ -65,7 +65,6 @@ Expected success signals:
 - Live templates (`template`, `choice`, `signatory`, `script`, …)
 - Per-project settings: DAML SDK version installer, runtime validation, DAML/DPM/Canton binary paths, log level, telemetry, extra args, multi-package mode
 - DAML LSP currently uses stable single-package `damlc ide`; root `multi-package.yaml` projects fall back to the active or first nested `daml.yaml` package workspace.
-- The upstream DAML TextMate grammar is bundled at `resources/grammars/daml.tmLanguage.xml` for users who want to register it manually via **Settings → Editor → TextMate Bundles** (not auto-registered)
 
 ## Prerequisites
 

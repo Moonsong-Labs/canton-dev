@@ -1,6 +1,7 @@
 package com.moonsonglabs.daml.workspace
 
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.project.RootsChangeRescanningInfo
 import com.intellij.openapi.roots.ProjectFileIndex
 import com.intellij.openapi.roots.ex.ProjectRootManagerEx
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
@@ -21,7 +22,8 @@ class DamlDirectoryExcludePolicyTest : BasePlatformTestCase() {
         assertTrue(excludedUrls.any { it.endsWith("/vault-impl/.daml") })
         ApplicationManager.getApplication().runWriteAction(object : Runnable {
             override fun run() {
-                ProjectRootManagerEx.getInstanceEx(project).makeRootsChange(Runnable {}, false, true)
+                ProjectRootManagerEx.getInstanceEx(project)
+                    .makeRootsChange(Runnable {}, RootsChangeRescanningInfo.TOTAL_RESCAN)
             }
         })
         assertTrue(index.isExcluded(cached.virtualFile))

@@ -44,21 +44,21 @@ private class DamlChoiceReferenceProvider : PsiReferenceProvider() {
         if (use.startOffset != element.textRange.startOffset || use.endOffset != element.textRange.endOffset) {
             return PsiReference.EMPTY_ARRAY
         }
-        if (DamlChoiceResolver.getInstance(element.project).resolveChoice(use.name, file.virtualFile) == null) {
+        if (DamlChoiceResolver.getInstance(element.project).resolveChoiceUse(use, file.virtualFile) == null) {
             return PsiReference.EMPTY_ARRAY
         }
 
-        return arrayOf(DamlChoiceReference(element, use.name))
+        return arrayOf(DamlChoiceReference(element, use))
     }
 }
 
 internal class DamlChoiceReference(
     element: PsiElement,
-    private val choiceName: String
+    private val use: DamlChoiceNames.ChoiceUse
 ) : PsiReferenceBase<PsiElement>(element, TextRange(0, element.textLength), true) {
     override fun resolve(): PsiElement? =
         DamlChoiceResolver.getInstance(element.project)
-            .resolveChoice(choiceName, element.containingFile?.virtualFile)
+            .resolveChoiceUse(use, element.containingFile?.virtualFile)
 
     override fun getVariants(): Array<Any> =
         DamlChoiceResolver.getInstance(element.project).choiceNames().toTypedArray()
@@ -66,6 +66,30 @@ internal class DamlChoiceReference(
 
 @Service(Service.Level.PROJECT)
 class DamlChoiceResolver(private val project: Project) {
+    fun resolveChoiceUse(use: DamlChoiceNames.ChoiceUse, contextFile: VirtualFile?): PsiElement? {
+        val psiFile = contextFile?.let { PsiManager.getInstance(project).findFile(it) }
+        val symbol = psiFile?.text?.let { DamlModuleNames.symbolAt(it, use.startOffset) }
+        val imports = psiFile?.text?.let(DamlModuleNames::imports).orEmpty()
+
+        symbol?.qualifier?.let { qualifier ->
+            imports.firstOrNull { it.qualifierMatches(qualifier) }?.let { import ->
+                return DamlModuleResolver.getInstance(project).resolveSymbol(import.moduleName, use.name, contextFile)
+            }
+            return DamlModuleResolver.getInstance(project).resolveSymbol(qualifier, use.name, contextFile)
+        }
+
+        resolveChoiceInFile(use.name, contextFile)?.let { return it }
+        imports
+            .asSequence()
+            .filter { !it.qualified && it.exposes(use.name) }
+            .firstNotNullOfOrNull { import ->
+                DamlModuleResolver.getInstance(project).resolveSymbol(import.moduleName, use.name, contextFile)
+            }
+            ?.let { return it }
+
+        return resolveChoice(use.name, contextFile)
+    }
+
     fun resolveChoice(choiceName: String, contextFile: VirtualFile?): PsiElement? {
         resolveChoiceInFile(choiceName, contextFile)?.let { return it }
 

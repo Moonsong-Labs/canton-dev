@@ -14,7 +14,7 @@ import java.nio.file.Paths
  *
  * Order matches the official VSCode extension's [findAssistantCommand]:
  *   1. user-supplied override path from settings,
- *   2. dpm if [DamlProjectSettings.useDPMWhenAvailable] is true,
+ *   2. dpm,
  *   3. daml,
  *   in each case checking PATH first then the well-known per-user install dir.
  *
@@ -39,10 +39,8 @@ object DamlBinaryLocator {
             return null
         }
 
-        if (settings.useDPMWhenAvailable) {
-            findOnPath("dpm")?.let { return Resolution(it, Resolution.Flavor.DPM) }
-            RuntimeEnvironment.findExecutable("dpm", settings)?.let { return Resolution(it, Resolution.Flavor.DPM) }
-        }
+        findOnPath("dpm")?.let { return Resolution(it, Resolution.Flavor.DPM) }
+        RuntimeEnvironment.findExecutable("dpm", settings)?.let { return Resolution(it, Resolution.Flavor.DPM) }
 
         workspaceSdkVersion(workspaceRoot)?.let { sdkVersion ->
             wellKnown(".daml/sdk/$sdkVersion/daml/daml")?.let {

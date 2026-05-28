@@ -6,7 +6,6 @@ import com.intellij.ui.table.JBTable
 import java.awt.Container
 import javax.swing.JLabel
 import javax.swing.JTabbedPane
-import javax.swing.table.DefaultTableModel
 
 class CantonSandboxPanelTest : BasePlatformTestCase() {
     fun `test panel constructs with default profile`() {
@@ -26,7 +25,7 @@ class CantonSandboxPanelTest : BasePlatformTestCase() {
             assertFalse(panel.containsTab("Explorer"))
             assertTrue(panel.containsTab("Topology"))
             assertTrue(panel.containsTab("Nodes"))
-            assertTrue(panel.containsTab("DARs"))
+            assertFalse(panel.containsTab("DARs"))
             assertTrue(panel.containsTab("Parties"))
             assertTrue(panel.containsTab("Logs"))
         } finally {
@@ -122,15 +121,13 @@ class CantonSandboxPanelTest : BasePlatformTestCase() {
         }
     }
 
-    fun `test network renderers map participants syncs connections and dar warnings`() {
+    fun `test network renderers map participants syncs and connections`() {
         val panel = CantonSandboxPanel(project)
 
         try {
             val participantTable = panel.privateField<JBTable>("participantTable")
             val syncTable = panel.privateField<JBTable>("syncTable")
             val connectionTable = panel.privateField<JBTable>("connectionTable")
-            val darTable = panel.privateField<JBTable>("darTable")
-            val darModel = panel.privateField<DefaultTableModel>("darModel")
 
             val participant = participantTable.renderedLabel(0, 0)
             assertEquals(networkParticipantColor(), participant.foreground)
@@ -141,10 +138,6 @@ class CantonSandboxPanelTest : BasePlatformTestCase() {
             val connected = connectionTable.renderedLabel(0, 2)
             assertEquals("connected", connected.text)
             assertEquals(networkConnectionColor(true), connected.foreground)
-
-            darModel.addRow(arrayOf("broken.dar", "broken", "", "", "", "inspect failed"))
-            val warning = darTable.renderedLabel(darTable.rowCount - 1, 5)
-            assertEquals(networkDarInspectColor("inspect failed"), warning.foreground)
         } finally {
             panel.dispose()
         }

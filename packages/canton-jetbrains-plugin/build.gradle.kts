@@ -27,13 +27,11 @@ dependencies {
         // Bundled plugins we depend on at runtime. If a name fails to resolve in your IDE
         // edition (e.g. JSON plugin id changes), comment the offending line and remove the
         // matching <depends> from plugin.xml.
-        bundledPlugin("org.jetbrains.plugins.textmate")
         bundledPlugin("com.intellij.modules.json")
         bundledPlugin("org.jetbrains.plugins.yaml")
         bundledPlugin("org.jetbrains.plugins.terminal")
 
         pluginVerifier()
-        zipSigner()
         testFramework(TestFrameworkType.Platform)
     }
 }
@@ -48,8 +46,7 @@ intellijPlatform {
         ideaVersion {
             sinceBuild = properties("pluginSinceBuild")
             // untilBuild deliberately omitted: the IntelliJ Platform Gradle Plugin will
-            // auto-detect a sensible upper bound from `platformVersion`. To pin manually,
-            // set `pluginUntilBuild` in gradle.properties (e.g. "252.*").
+            // auto-detect a sensible upper bound from `platformVersion`.
         }
     }
 

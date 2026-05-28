@@ -27,7 +27,7 @@ class DamlChoiceReferencesSearch : QueryExecutor<PsiReference, ReferencesSearch.
             val psiFile = psiManager.findFile(file) ?: continue
             for (use in DamlChoiceNames.uses(psiFile.text).filter { it.name == declaration.name }) {
                 val element = psiFile.findElementAt(use.startOffset) ?: continue
-                val reference = DamlChoiceReference(element, declaration.name)
+                val reference = DamlChoiceReference(element, use)
                 val resolved = reference.resolve()
                 if (sameChoiceDeclaration(resolved, declaration) && !consumer.process(reference)) return false
             }

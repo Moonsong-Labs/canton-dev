@@ -220,6 +220,66 @@ testRoute = script do
         assertTrue(references.any { it.element.containingFile == test && it.element.textRange.startOffset == usageOffset })
     }
 
+    fun testQualifiedChoiceExerciseResolvesThroughImportAlias() {
+        val first = myFixture.addFileToProject(
+            "src/Vault/First.daml",
+            """
+module Vault.First where
+
+template Vault
+  with operator : Party
+  where
+    signatory operator
+    choice RouteDeposit : ()
+      controller operator
+      do pure ()
+""".trimIndent()
+        )
+        val second = myFixture.addFileToProject(
+            "src/Vault/Second.daml",
+            first.text.replace("module Vault.First", "module Vault.Second")
+        )
+        val test = myFixture.addFileToProject(
+            "src/Tests/VaultTest.daml",
+            """
+module Tests.VaultTest where
+
+import qualified Vault.Second as V
+
+testRoute = script do
+  submit operator ${'$'} exerciseCmd vault0 V.RouteDeposit
+""".trimIndent()
+        )
+        val firstDeclaration = first.findElementAt(first.text.indexOf("RouteDeposit :"))!!
+        val secondDeclaration = second.findElementAt(second.text.indexOf("RouteDeposit :"))!!
+        val usageOffset = test.text.indexOf("RouteDeposit", test.text.indexOf("exerciseCmd"))
+        val use = DamlChoiceNames.useAt(test.text, usageOffset)!!
+
+        assertEquals(secondDeclaration, DamlChoiceResolver.getInstance(project).resolveChoiceUse(use, test.virtualFile))
+        assertFalse(ReferencesSearch.search(firstDeclaration).findAll().any { it.element.containingFile == test })
+        assertTrue(ReferencesSearch.search(secondDeclaration).findAll().any { it.element.containingFile == test })
+    }
+
+    fun testFindUsagesTargetDoesNotTreatReturnTypeAsChoiceName() {
+        val file = myFixture.configureByText(
+            DamlFileType,
+            """
+module User where
+
+template T
+  with operator : Party
+  where
+    signatory operator
+    choice C : ContractId T
+      controller operator
+      do pure this
+""".trimIndent()
+        )
+        val returnType = file.findElementAt(file.text.indexOf("ContractId"))!!
+
+        assertNull(DamlChoiceUsageTargets.fromElement(returnType))
+    }
+
     fun testFindUsagesProviderAcceptsChoiceDeclarations() {
         val file = myFixture.configureByText(DamlFileType, privateSettlementSnippet)
         val declaration = file.findElementAt(privateSettlementSnippet.indexOf("Accept :"))!!

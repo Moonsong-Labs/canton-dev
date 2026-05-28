@@ -97,6 +97,7 @@ class SandboxSessionService(private val project: Project) : Disposable {
             stopCurrent(wait = true)
             val root = generator.generatedRoot(profile)
             runCatching {
+                root.resolve("local").resolve("log").toFile().deleteRecursively()
                 root.resolve("logs").toFile().deleteRecursively()
                 root.resolve("data").toFile().deleteRecursively()
             }.onFailure { appendLog("Clean failed: ${it.message}\n") }

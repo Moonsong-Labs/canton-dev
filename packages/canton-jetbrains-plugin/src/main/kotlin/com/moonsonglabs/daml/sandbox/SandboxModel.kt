@@ -94,9 +94,6 @@ data class SandboxProfile(
 
     fun hasUploadedDarAssignments(): Boolean =
         darAssignments.any { it.participantIds.isNotEmpty() }
-
-    fun participantsWithoutDars(): List<ParticipantNode> =
-        participants.filter { assignedDarFileNames(it.id).isEmpty() }
 }
 
 private fun darDisplayName(path: String): String =
@@ -104,16 +101,6 @@ private fun darDisplayName(path: String): String =
         .getOrNull()
         ?.takeIf { it.isNotBlank() }
         ?: path.ifBlank { "(unnamed DAR)" }
-
-data class DarMetadata(
-    var path: String = "",
-    var name: String = "",
-    var version: String = "",
-    var mainPackageId: String = "",
-    var description: String = "",
-    var templates: MutableList<String> = mutableListOf(),
-    var inspectError: String = ""
-)
 
 data class Endpoint(
     val nodeId: String,
@@ -244,6 +231,4 @@ object SandboxDefaults {
 object TopologyNodeIcons {
     const val PARTICIPANT = "◉"
     const val SYNCHRONIZER = "◇"
-    const val SEQUENCER = "▷"
-    const val MEDIATOR = "◆"
 }

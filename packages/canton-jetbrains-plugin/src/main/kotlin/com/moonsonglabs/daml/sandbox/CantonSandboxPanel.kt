@@ -3,12 +3,9 @@ package com.moonsonglabs.daml.sandbox
 import com.intellij.icons.AllIcons
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.fileChooser.FileChooser
-import com.intellij.openapi.fileChooser.FileChooserDescriptor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.wm.ToolWindowManager
-import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextField
 import com.intellij.ui.table.JBTable
@@ -31,11 +28,9 @@ import java.awt.event.FocusAdapter
 import java.awt.event.FocusEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
-import java.nio.file.Path
 import javax.swing.BorderFactory
 import javax.swing.DefaultComboBoxModel
 import javax.swing.DefaultListCellRenderer
-import javax.swing.DefaultListModel
 import javax.swing.JButton
 import javax.swing.JComboBox
 import javax.swing.JComponent
@@ -66,7 +61,6 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
     private val profiles = SandboxProfileService.getInstance(project)
     private val sessions = SandboxSessionService.getInstance(project)
     private val explorerNavigation = SandboxExplorerNavigationService.getInstance(project)
-    private val darDiscovery = DarDiscoveryService.getInstance(project)
     private val graph = TopologyGraphPanel()
 
     private val profileComboModel = DefaultComboBoxModel<SandboxProfile>()
@@ -78,19 +72,14 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
     private val participantModel = tableModel("Participant", "Ledger", "Admin", "JSON")
     private val syncModel = tableModel("Sync Domain", "Sequencer", "Seq Public", "Seq Admin", "Mediator", "Med Admin")
     private val connectionModel = tableModel("Participant", "Sync Domain", "Connected")
-    private val darModel = tableModel("DAR", "Name", "Version", "Main Package", "Assigned Participants", "Inspect")
     private val partyModel = tableModel("Participant", "Sync Domain", "Party Hint")
 
     private val participantTable = table(participantModel)
     private val syncTable = table(syncModel)
     private val connectionTable = table(connectionModel)
-    private val darTable = table(darModel)
     private val partyTable = table(partyModel)
     private val participantEndpointConsole = ParticipantEndpointConsole(project, sessions)
     private val syncDomainEndpointConsole = SyncDomainEndpointConsole(project, sessions)
-    private val darParticipantList = JBList(DefaultListModel<String>()).apply {
-        selectionMode = ListSelectionModel.MULTIPLE_INTERVAL_SELECTION
-    }
     private val partyField = JBTextField("Alice")
     private val partyParticipantCombo = JComboBox<String>()
     private val partySyncCombo = JComboBox<String>()
@@ -105,7 +94,6 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
     }
 
     private var currentProfile: SandboxProfile = profiles.selectedProfile()
-    private var latestDars: List<DarMetadata> = emptyList()
     private var latestSession: SandboxSessionState = sessions.snapshot()
     private var currentTopologySelection: TopologyGraphPanel.Selection? = null
     private var sessionListener: Disposable? = null
@@ -264,7 +252,6 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
         val tabs = styledTabbedPane()
         tabs.addTab("Topology", topologyTab())
         tabs.addTab("Nodes", nodesTab())
-        tabs.addTab("DARs", darsTab())
         tabs.addTab("Parties", partiesTab())
         tabs.addTab("Logs", logsTab())
         return JPanel(BorderLayout()).apply {
@@ -308,38 +295,6 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
             border = BorderFactory.createEmptyBorder()
             background = TopologyGraphTheme.canvas
         }
-
-    private fun darsTab(): JComponent {
-        val panel = networkPanel(BorderLayout(8, 8))
-        panel.add(networkCard(themedScrollPane(darTable)), BorderLayout.CENTER)
-        panel.add(networkCard(
-            content = JPanel(BorderLayout(0, 8)).apply {
-                background = TopologyGraphTheme.panel
-                add(networkCardTitle("Assign to participants"), BorderLayout.NORTH)
-                add(themedScrollPane(darParticipantList), BorderLayout.CENTER)
-                add(row(
-                    button("Refresh DARs", AllIcons.Actions.Refresh) { refreshDars() },
-                    button("Add DAR", AllIcons.General.Add) { addDarFromChooser() },
-                    button("Assign Selected", AllIcons.Actions.Commit) {
-                        val dar = selectedDarPath() ?: return@button
-                        val participantIds = darParticipantList.selectedValuesList.mapNotNull { name ->
-                            currentProfile.participants.firstOrNull { it.name == name }?.id
-                        }
-                        assignDar(dar, participantIds)
-                    },
-                    button("Remove Assignment", AllIcons.General.Remove) {
-                        selectedDarPath()?.let { path ->
-                            currentProfile.darAssignments.removeIf { it.darPath == path }
-                            persistAndRefresh()
-                        }
-                    }
-                ), BorderLayout.SOUTH)
-            }
-        ).apply {
-            preferredSize = Dimension(320, 160)
-        }, BorderLayout.EAST)
-        return panel
-    }
 
     private fun partiesTab(): JComponent {
         val editor = row(
@@ -453,7 +408,7 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
     private fun validateProfile() {
         saveProfileFields()
         val profile = currentProfile
-        val generated = latestSession.generated
+        val generated = latestSession.generated.takeIf { latestSession.profileId == profile.id }
         ApplicationManager.getApplication().executeOnPooledThread {
             val result = SandboxRuntimeValidator.getInstance(project).validate(profile, generated)
             SwingUtilities.invokeLater {
@@ -499,18 +454,6 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
                 selectSynchronizerRow(selection.id)
                 editSelectedSynchronizer()
             }
-            is TopologyGraphPanel.Selection.Sequencer -> {
-                selectedSynchronizerId(selection)?.let {
-                    selectSynchronizerRow(it)
-                    editSelectedSynchronizer()
-                }
-            }
-            is TopologyGraphPanel.Selection.Mediator -> {
-                selectedSynchronizerId(selection)?.let {
-                    selectSynchronizerRow(it)
-                    editSelectedSynchronizer()
-                }
-            }
             null -> Messages.showInfoMessage(project, "Select a topology node first.", "Managed Canton Sandboxes")
         }
     }
@@ -519,8 +462,6 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
         when (val selection = currentTopologySelection) {
             is TopologyGraphPanel.Selection.Participant -> removeParticipantById(selection.id)
             is TopologyGraphPanel.Selection.Synchronizer -> removeSynchronizerById(selection.id)
-            is TopologyGraphPanel.Selection.Sequencer -> selectedSynchronizerId(selection)?.let(::removeSynchronizerById)
-            is TopologyGraphPanel.Selection.Mediator -> selectedSynchronizerId(selection)?.let(::removeSynchronizerById)
             null -> Messages.showInfoMessage(project, "Select a topology node first.", "Managed Canton Sandboxes")
         }
     }
@@ -780,8 +721,6 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
     private fun selectedSynchronizerId(selection: TopologyGraphPanel.Selection?): String? =
         when (selection) {
             is TopologyGraphPanel.Selection.Synchronizer -> selection.id
-            is TopologyGraphPanel.Selection.Sequencer -> currentProfile.synchronizers.firstOrNull { it.sequencer.id == selection.id }?.id
-            is TopologyGraphPanel.Selection.Mediator -> currentProfile.synchronizers.firstOrNull { it.mediator.id == selection.id }?.id
             else -> null
         }
 
@@ -789,8 +728,6 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
         when (selection) {
             is TopologyGraphPanel.Selection.Participant -> selection.id
             is TopologyGraphPanel.Selection.Synchronizer -> selection.id
-            is TopologyGraphPanel.Selection.Sequencer -> selection.id
-            is TopologyGraphPanel.Selection.Mediator -> selection.id
         }
 
     private fun rebasePorts() {
@@ -809,43 +746,6 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
             }
         }.toMutableList()
         persistAndRefresh()
-    }
-
-    private fun refreshDars() {
-        ApplicationManager.getApplication().executeOnPooledThread {
-            latestDars = darDiscovery.discover(currentProfile)
-            SwingUtilities.invokeLater { renderDars() }
-        }
-    }
-
-    private fun addDarFromChooser() {
-        val descriptor = FileChooserDescriptor(true, false, false, false, false, true).withFileFilter {
-            it.extension == "dar"
-        }
-        val files = FileChooser.chooseFiles(descriptor, project, null)
-        files.forEach { file ->
-            if (currentProfile.darAssignments.none { it.darPath == file.path }) {
-                currentProfile.darAssignments.add(DarAssignment(file.path, currentProfile.participants.map { it.id }.toMutableList()))
-            }
-        }
-        persistAndRefresh()
-        refreshDars()
-    }
-
-    private fun assignDar(path: String, participantIds: List<String>) {
-        val assignment = currentProfile.darAssignments.firstOrNull { it.darPath == path }
-        if (assignment == null) {
-            currentProfile.darAssignments.add(DarAssignment(path, participantIds.toMutableList()))
-        } else {
-            assignment.participantIds = participantIds.toMutableList()
-        }
-        persistAndRefresh()
-    }
-
-    private fun selectedDarPath(): String? {
-        val row = darTable.selectedRow
-        if (row >= 0) return darTable.getValueAt(row, 0) as? String
-        return null
     }
 
     private fun removeSelectedPartyAllocation() {
@@ -880,10 +780,8 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
         currentProfile.partyAllocations.forEach {
             partyModel.addRow(rowData(currentProfile.participant(it.participantId)?.name.orEmpty(), currentProfile.synchronizer(it.synchronizerId)?.name.orEmpty(), it.partyHint))
         }
-        renderDars()
         graph.setProfile(currentProfile)
         renderPalette()
-        refreshDarParticipantList()
         refreshPartyCombos()
         updateParticipantEndpointConsole()
         updateSyncDomainEndpointConsole()
@@ -908,32 +806,6 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
     private fun renderPalette() {
         componentPalette.setProfile(currentProfile)
         componentPalette.select(currentTopologySelection)
-    }
-
-    private fun renderDars() {
-        reset(darModel)
-        val dars = (latestDars + currentProfile.darAssignments.map { DarMetadata(path = it.darPath, name = Path.of(it.darPath).fileName.toString()) })
-            .distinctBy { it.path }
-            .sortedBy { it.path }
-        dars.forEach { dar ->
-            val assigned = currentProfile.darAssignments.firstOrNull { it.darPath == dar.path }
-                ?.participantIds
-                ?.mapNotNull { currentProfile.participant(it)?.name }
-                ?.joinToString(", ")
-                .orEmpty()
-            darModel.addRow(rowData(dar.path, dar.name, dar.version, dar.mainPackageId, assigned, dar.inspectError.ifBlank { "ok" }))
-        }
-    }
-
-    private fun refreshDarParticipantList() {
-        val model = darParticipantList.model as DefaultListModel<String>
-        val selected = darParticipantList.selectedValuesList.toSet()
-        model.clear()
-        currentProfile.participants.forEach { model.addElement(it.name) }
-        val selectedIndices = currentProfile.participants
-            .mapIndexedNotNull { index, participant -> index.takeIf { participant.name in selected } }
-            .toIntArray()
-        darParticipantList.selectedIndices = selectedIndices
     }
 
     private fun refreshPartyCombos() {
@@ -997,12 +869,6 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
                 |${currentProfile.bindings.filter { it.synchronizerId == sync.id && it.connected }.mapNotNull { currentProfile.participant(it.participantId)?.name }.joinToString("\n").ifBlank { "None" }}
                 |""".trimMargin()
             }
-            is TopologyGraphPanel.Selection.Sequencer -> currentProfile.synchronizers.firstOrNull { it.sequencer.id == selection.id }?.sequencer?.let {
-                "${TopologyNodeIcons.SEQUENCER} Sequencer - ${it.name}\n\nPublic API: grpc://127.0.0.1:${it.publicPort}\nAdmin API: grpc://127.0.0.1:${it.adminPort}"
-            }
-            is TopologyGraphPanel.Selection.Mediator -> currentProfile.synchronizers.firstOrNull { it.mediator.id == selection.id }?.mediator?.let {
-                "${TopologyNodeIcons.MEDIATOR} Mediator - ${it.name}\n\nAdmin API: grpc://127.0.0.1:${it.adminPort}"
-            }
             null -> null
         }
         graph.setSelectionDetails(text)
@@ -1060,7 +926,6 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
     private fun styleNetworkControls() {
         listOf(nameField, portBaseField, partyField).forEach(::styleTextField)
         listOf(partyParticipantCombo, partySyncCombo).forEach(::styleComboBox)
-        styleList(darParticipantList)
     }
 
     private fun styledTabbedPane(): JTabbedPane =
@@ -1090,12 +955,6 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
                 JBUI.Borders.empty(10)
             )
             add(content, BorderLayout.CENTER)
-        }
-
-    private fun networkCardTitle(text: String): JLabel =
-        JLabel(text).apply {
-            foreground = TopologyGraphTheme.text
-            font = font.deriveFont(Font.BOLD, 13f)
         }
 
     private fun networkLabel(text: String): JLabel =
@@ -1138,15 +997,6 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
         combo.background = TopologyGraphTheme.panel
         combo.border = BorderFactory.createLineBorder(TopologyGraphTheme.panelBorder)
         combo.renderer = NetworkListCellRenderer()
-    }
-
-    private fun styleList(list: JList<String>) {
-        list.background = TopologyGraphTheme.panel
-        list.foreground = TopologyGraphTheme.text
-        list.selectionBackground = networkAlpha(TopologyGraphTheme.selected, 90)
-        list.selectionForeground = TopologyGraphTheme.text
-        list.fixedCellHeight = 28
-        list.cellRenderer = NetworkListCellRenderer()
     }
 
     private fun renderLog(log: String) {
@@ -1302,9 +1152,6 @@ internal fun networkSyncColor(name: String): Color =
 internal fun networkConnectionColor(connected: Boolean): Color =
     if (connected) TopologyGraphTheme.syncBorder else Color(0xFF5C7A)
 
-internal fun networkDarInspectColor(inspect: String): Color =
-    if (inspect.equals("ok", ignoreCase = true)) TopologyGraphTheme.syncBorder else TopologyGraphTheme.warning
-
 internal fun networkStatusColor(status: SandboxSessionStatus): Color =
     when (status) {
         SandboxSessionStatus.RUNNING -> TopologyGraphTheme.syncBorder
@@ -1394,22 +1241,12 @@ private class NetworkTableCellRenderer : DefaultTableCellRenderer() {
                 )
                 horizontalAlignment = SwingConstants.CENTER
             }
-            "Inspect" -> {
-                foreground = networkDarInspectColor(textValue)
-                text = textValue.ifBlank { "not inspected" }
-                font = font.deriveFont(if (text.equals("ok", ignoreCase = true)) Font.PLAIN else Font.BOLD)
-            }
-            "DAR", "Main Package" -> {
-                foreground = TopologyGraphTheme.detail
-                font = Font(Font.MONOSPACED, Font.PLAIN, 12)
-            }
             "Ledger", "Admin", "JSON", "Seq Public", "Seq Admin", "Med Admin" -> {
                 foreground = TopologyGraphTheme.detail
                 horizontalAlignment = SwingConstants.RIGHT
             }
-            "Assigned Participants" -> foreground = TopologyGraphTheme.participantBorder
             "Party Hint" -> foreground = TopologyGraphTheme.warning
-            "Name", "Version", "Sequencer", "Mediator" -> foreground = TopologyGraphTheme.text
+            "Sequencer", "Mediator" -> foreground = TopologyGraphTheme.text
         }
         return this
     }

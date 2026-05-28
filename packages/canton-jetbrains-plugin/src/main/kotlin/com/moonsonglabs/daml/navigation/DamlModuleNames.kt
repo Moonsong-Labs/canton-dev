@@ -96,6 +96,7 @@ object DamlModuleNames {
         for (regex in declarationRegexes) {
             for (match in regex.findAll(text)) {
                 val group = match.groupOrNull(2) ?: match.groupOrNull(1) ?: continue
+                if (!isCodePosition(text, group.range.first)) continue
                 val name = group.value
                 if (name in setOf("module", "import", "where", "let", "in", "do", "case", "of", "if", "then", "else")) {
                     continue
@@ -110,6 +111,9 @@ object DamlModuleNames {
     fun declarationNamed(text: String, symbolName: String): SymbolDeclaration? =
         declarations(text).firstOrNull { it.name == symbolName.trim('`') }
 
+    fun navigableDeclarationNamed(text: String, symbolName: String): SymbolDeclaration? =
+        navigableDeclarations(text).firstOrNull { it.name == symbolName.trim('`') }
+
     fun declarationAt(text: String, offset: Int): SymbolDeclaration? {
         val token = identifierAt(text, offset) ?: return null
         return declarations(text).firstOrNull { declaration ->
@@ -120,6 +124,7 @@ object DamlModuleNames {
     fun symbolAt(text: String, offset: Int): SymbolReference? {
         if (text.isEmpty()) return null
         val token = identifierAt(text, offset) ?: return null
+        if (!isCodePosition(text, token.startOffset)) return null
         if (token.endOffset < text.length && text[token.endOffset] == '.') return null
 
         val qualifier = qualifierBefore(text, token.startOffset)
@@ -177,6 +182,70 @@ object DamlModuleNames {
         return null
     }
 
+    fun isCodePosition(text: String, offset: Int): Boolean {
+        if (text.isEmpty()) return false
+        val target = offset.coerceIn(0, text.length)
+        var cursor = 0
+        var inString = false
+        var inLineComment = false
+        var blockDepth = 0
+        while (cursor < target) {
+            val c = text[cursor]
+            val next = text.getOrNull(cursor + 1)
+            when {
+                inLineComment && c == '\n' -> inLineComment = false
+                inLineComment -> Unit
+                blockDepth > 0 && !inString && c == '{' && next == '-' -> {
+                    blockDepth++
+                    cursor++
+                }
+                blockDepth > 0 && !inString && c == '-' && next == '}' -> {
+                    blockDepth--
+                    cursor++
+                }
+                blockDepth > 0 -> Unit
+                !inString && c == '-' && next == '-' -> {
+                    inLineComment = true
+                    cursor++
+                }
+                !inString && c == '{' && next == '-' -> {
+                    blockDepth = 1
+                    cursor++
+                }
+                c == '"' && !isEscaped(text, cursor) -> inString = !inString
+            }
+            cursor++
+        }
+        return !inString && !inLineComment && blockDepth == 0
+    }
+
+    private fun navigableDeclarations(text: String): List<SymbolDeclaration> {
+        val declarations = linkedMapOf<String, Int>()
+        val typeOrData = Regex("""^(interface|template|data|newtype|type|class|exception)\s+([A-Z][A-Za-z0-9_']*)\b""")
+        val choice = Regex("""^\s*(?:(?:nonconsuming|preconsuming|postconsuming)\s+)?choice\s+([A-Z][A-Za-z0-9_']*)\b""")
+        val topLevelValue = Regex("""^([a-zA-Z_][A-Za-z0-9_']*)\s*(?::|=(?!=))""")
+        var offset = 0
+        text.lineSequence().forEach { line ->
+            val trimmedStart = line.indexOfFirst { !it.isWhitespace() }.let { if (it == -1) line.length else it }
+            val codeOffset = offset + trimmedStart
+            if (trimmedStart < line.length && isCodePosition(text, codeOffset)) {
+                if (trimmedStart == 0) {
+                    typeOrData.find(line)?.groups?.get(2)?.let { declarations.putIfAbsent(it.value, offset + it.range.first) }
+                    topLevelValue.find(line)?.groups?.get(1)?.let { group ->
+                        val name = group.value
+                        if (name !in setOf("module", "import", "where", "let", "in", "do", "case", "of", "if", "then", "else")) {
+                            declarations.putIfAbsent(name, offset + group.range.first)
+                        }
+                    }
+                }
+                choice.find(line)?.groups?.get(1)?.let { declarations.putIfAbsent(it.value, offset + it.range.first) }
+            }
+            offset += line.length + 1
+        }
+        return declarations.map { (name, startOffset) -> SymbolDeclaration(name, startOffset) }
+            .sortedBy { it.startOffset }
+    }
+
     private fun importSymbols(symbolList: String): Set<String> =
         symbolNameRegex.findAll(symbolList)
             .map { it.value.trim('`') }
@@ -213,6 +282,16 @@ object DamlModuleNames {
 
     private fun isIdentifierPart(c: Char): Boolean =
         c.isLetterOrDigit() || c == '_' || c == '\''
+
+    private fun isEscaped(text: String, offset: Int): Boolean {
+        var cursor = offset - 1
+        var count = 0
+        while (cursor >= 0 && text[cursor] == '\\') {
+            count++
+            cursor--
+        }
+        return count % 2 == 1
+    }
 
     private fun MatchResult.groupOrNull(index: Int): MatchGroup? =
         runCatching { groups[index] }.getOrNull()
