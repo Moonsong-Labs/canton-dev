@@ -10,8 +10,12 @@ import com.intellij.openapi.components.Storage
 import com.intellij.openapi.components.service
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.vfs.VirtualFileManager
+import com.intellij.openapi.vfs.newvfs.BulkFileListener
+import com.intellij.openapi.vfs.newvfs.events.VFileEvent
 import com.moonsonglabs.daml.workspace.DamlWorkspaceService
 import java.nio.file.Files
+import java.nio.file.InvalidPathException
 import java.nio.file.Path
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.io.path.name
@@ -32,6 +36,16 @@ class SandboxProfileService(private val project: Project) : PersistentStateCompo
     private val gson = GsonBuilder().create()
     private val listeners = CopyOnWriteArrayList<(SandboxProfile) -> Unit>()
     private var detectedProfilesLoaded = false
+
+    init {
+        project.messageBus.connect(project).subscribe(VirtualFileManager.VFS_CHANGES, object : BulkFileListener {
+            override fun after(events: MutableList<out VFileEvent>) {
+                if (events.any { isDetectedProfilePath(it.path) }) {
+                    refreshDetectedProfiles()
+                }
+            }
+        })
+    }
 
     override fun getState(): State = state
 
@@ -93,6 +107,11 @@ class SandboxProfileService(private val project: Project) : PersistentStateCompo
         return Disposable { listeners -= listener }
     }
 
+    fun refreshDetectedProfiles() {
+        detectedProfilesLoaded = false
+        loadDetectedProfiles(force = true)
+    }
+
     private fun ensureProfile() {
         loadDetectedProfiles()
         if (state.profiles.isNotEmpty()) return
@@ -100,21 +119,20 @@ class SandboxProfileService(private val project: Project) : PersistentStateCompo
         upsert(profile)
     }
 
-    private fun loadDetectedProfiles() {
-        if (detectedProfilesLoaded && state.profiles.any { !isDefaultManagedProfile(it) }) return
+    private fun loadDetectedProfiles(force: Boolean = false) {
+        if (!force && detectedProfilesLoaded && state.profiles.any { !isDefaultManagedProfile(it) }) return
         detectedProfilesLoaded = true
 
         val existingIds = state.profiles.map { it.id }.toSet()
         val selectedBefore = state.profiles.firstOrNull { it.id == state.selectedProfileId }
         val detected = detectedProfileFiles().mapNotNull { path ->
             readDetectedProfile(path)?.let { DetectedProfile(path, inferredWorkspace(path), it) }
-        }
+        }.onEach { detectedProfile ->
+            normalizeDetectedProfile(detectedProfile.profile, detectedProfile.path, detectedProfile.workspace)
+        }.distinctBy(::detectedProfileKey)
         if (detected.isEmpty()) return
 
-        detected.forEach { detectedProfile ->
-            normalizeDetectedProfile(detectedProfile.profile, detectedProfile.path, detectedProfile.workspace)
-            upsertDetected(detectedProfile.profile)
-        }
+        detected.forEach { detectedProfile -> upsertDetected(detectedProfile.profile) }
         val importedNewProfile = detected.any { it.profile.id !in existingIds }
         if (importedNewProfile || selectedBefore == null || isDefaultManagedProfile(selectedBefore)) {
             state.selectedProfileId = preferredDetectedProfile(detected)?.profile?.id ?: detected.first().profile.id
@@ -178,7 +196,9 @@ class SandboxProfileService(private val project: Project) : PersistentStateCompo
     }
 
     private fun upsertDetected(profile: SandboxProfile) {
-        val index = state.profiles.indexOfFirst { it.id == profile.id }
+        val index = state.profiles.indexOfFirst {
+            it.id == profile.id || (profile.generatedPath.isNotBlank() && it.generatedPath == profile.generatedPath)
+        }
         if (index >= 0) {
             state.profiles[index] = profile
         } else {
@@ -206,6 +226,9 @@ class SandboxProfileService(private val project: Project) : PersistentStateCompo
         )
     }
 
+    private fun detectedProfileKey(detectedProfile: DetectedProfile): String =
+        detectedProfile.profile.generatedPath.ifBlank { detectedProfile.profile.id }
+
     private fun inferredWorkspace(path: Path): Path? =
         when {
             path.name == DETECTED_PROFILE_NAME -> path.parent
@@ -215,6 +238,15 @@ class SandboxProfileService(private val project: Project) : PersistentStateCompo
 
     private fun detectionPriority(path: Path): Int =
         if (path.name == DETECTED_PROFILE_NAME) 0 else 1
+
+    private fun isDetectedProfilePath(path: String): Boolean =
+        try {
+            val profilePath = Path.of(path)
+            profilePath.name == DETECTED_PROFILE_NAME ||
+                (profilePath.name == "profile.json" && profilePath.parent?.parent?.name == SandboxDefaults.GENERATED_DIR)
+        } catch (_: InvalidPathException) {
+            false
+        }
 
     private fun isDefaultManagedProfile(profile: SandboxProfile): Boolean =
         profile.name == "Managed Canton Sandbox" &&

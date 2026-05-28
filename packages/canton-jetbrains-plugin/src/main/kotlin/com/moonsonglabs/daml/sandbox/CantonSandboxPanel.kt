@@ -97,6 +97,7 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
     private var latestSession: SandboxSessionState = sessions.snapshot()
     private var currentTopologySelection: TopologyGraphPanel.Selection? = null
     private var sessionListener: Disposable? = null
+    private var profileListener: Disposable? = null
     private var loadingProfile = false
     private var suppressTableNavigation = false
 
@@ -109,6 +110,13 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
         wireTableNavigation()
         refreshProfiles()
         loadProfile(profiles.selectedProfile())
+        profileListener = profiles.addListener { profile ->
+            if (SwingUtilities.isEventDispatchThread()) {
+                loadProfile(profile)
+            } else {
+                SwingUtilities.invokeLater { loadProfile(profile) }
+            }
+        }
         sessionListener = sessions.addListener { state ->
             latestSession = state
             SwingUtilities.invokeLater { renderSession(state) }
@@ -123,7 +131,6 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
         profileCombo.addActionListener {
             if (!loadingProfile && !profileCombo.isDeletingProfileFromPopup) (profileCombo.selectedItem as? SandboxProfile)?.let { profile ->
                 profiles.selectProfile(profile.id)
-                loadProfile(profile)
             }
         }
         nameField.columns = 24
@@ -1108,6 +1115,8 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
     override fun dispose() {
         sessionListener?.dispose()
         sessionListener = null
+        profileListener?.dispose()
+        profileListener = null
     }
 }
 

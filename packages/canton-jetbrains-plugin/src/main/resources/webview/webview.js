@@ -417,13 +417,16 @@ function transactionMapFromContracts(contracts) {
 }
 
 function transactionEventFromContract(contract) {
+  const kind = contract.archived ? 'Archived/Result' : 'Create';
+  const parties = contract.parties || [];
   return {
     id: 'contract-' + contract.id,
-    kind: contract.archived ? 'Archived/Result' : 'Create',
+    kind,
     label: contract.templateShort,
     contractId: contract.id,
     template: contract.template,
-    parties: contract.parties,
+    actors: primaryActorsForKind(kind, parties, []),
+    parties,
     fields: contract.fields,
     source: 'contract'
   };
@@ -1032,7 +1035,7 @@ function eventNode(event, index) {
 
 function eventNodeAt(event, indexLabel) {
   const children = event.children || [];
-  return el('details', { className: 'tx-node', open: true }, [
+  return el('details', { className: 'tx-node tx-node-' + eventKindCss(event.kind), open: true }, [
     el('summary', {}, [
       el('button', {
         className: 'tx-toggle',
@@ -1042,16 +1045,18 @@ function eventNodeAt(event, indexLabel) {
       }),
       el('span', { className: 'tx-step' }, indexLabel),
       eventBadge(event.kind),
-      eventHeadline(event),
+      el('span', { className: 'tx-event-main' }, [
+        eventHeadline(event),
+        eventSummaryRoles(event)
+      ]),
       event.contractId ? el('button', {
         className: 'link-button mono',
         type: 'button',
-        onclick: ev => { ev.preventDefault(); state.selectedContractId = event.contractId; selectView('contracts'); }
+        onclick: ev => { ev.preventDefault(); ev.stopPropagation(); state.selectedContractId = event.contractId; selectView('contracts'); }
       }, shortId(event.contractId)) : null
     ]),
     el('div', { className: 'tx-node-body' }, [
-      event.template ? el('div', { className: 'muted' }, event.template) : null,
-      event.parties && event.parties.length ? el('div', { className: 'chip-row' }, event.parties.map(party => partyChip(party))) : null,
+      eventDetailSummary(event),
       event.fields && event.fields.length ? compactFieldGrid(event.fields.slice(0, 6)) : null,
       event.rawText && !event.fields.length ? el('div', { className: 'mono muted wrap' }, event.rawText) : null,
       children.length ? el('div', { className: 'tx-children' }, children.map((child, index) => eventNodeAt(child, indexLabel + '.' + (index + 1)))) : null
@@ -1068,7 +1073,7 @@ function toggleEventNode(event) {
 
 function eventHeadline(event) {
   const kind = String(event.kind || 'Event');
-  const actors = (event.actors && event.actors.length ? event.actors : []).map(party => party.name || party).filter(Boolean);
+  const actors = eventPrimaryActors(event).map(party => party.name || party).filter(Boolean);
   const parts = [];
   if (actors.length) {
     actors.slice(0, 2).forEach((party, index) => {
@@ -1094,6 +1099,109 @@ function eventHeadline(event) {
   }
 
   return el('span', { className: 'tx-event-title' }, parts.length ? parts : [document.createTextNode(event.label || kind)]);
+}
+
+function eventSummaryRoles(event) {
+  const groups = [];
+  const kind = String(event.kind || '');
+  if (kind === 'Create') {
+    groups.push(eventRoleGroup('signatory', partiesWithRole(event.parties, 'signatory')));
+    groups.push(eventRoleGroup('observer', partiesWithRole(event.parties, 'observer')));
+  } else if (kind === 'Exercise') {
+    const controllers = normalizePartyObjects(event.actors, 'controller')
+      .concat(partiesWithRole(event.parties, 'controller'));
+    groups.push(eventRoleGroup('controller', uniqueParties(controllers)));
+  } else {
+    groups.push(eventRoleGroup('witness', partiesWithRole(event.parties, 'witness')));
+  }
+  const visibleGroups = groups.filter(Boolean);
+  if (!visibleGroups.length) return null;
+  return el('span', { className: 'tx-event-meta' }, visibleGroups);
+}
+
+function eventRoleGroup(role, parties) {
+  const unique = uniqueParties(parties || []);
+  if (!unique.length) return null;
+  const shown = unique.slice(0, 3);
+  return el('span', { className: 'tx-role-group tx-role-group-' + roleCssClass(role) }, [
+    el('span', { className: 'tx-role-label ' + roleCssClass(role) }, role),
+    shown.map(party => partyChip(Object.assign({}, party, { roles: [role] }), null, false)),
+    unique.length > shown.length ? el('span', { className: 'tx-muted-token' }, '+' + (unique.length - shown.length)) : null
+  ]);
+}
+
+function eventDetailSummary(event) {
+  const rows = [];
+  addDetailRow(rows, 'Template', event.template ? txWord(event.template, 'tx-template') : null);
+  if (event.kind === 'Exercise' && event.label) addDetailRow(rows, 'Choice', txWord(event.label, 'tx-choice'));
+  addDetailRow(rows, 'Contract', event.contractId ? txWord(event.contractId, 'mono') : null);
+  addPartyDetailRow(rows, 'Signatories', partiesWithRole(event.parties, 'signatory'));
+  addPartyDetailRow(rows, 'Observers', partiesWithRole(event.parties, 'observer'));
+  if (event.kind === 'Exercise') {
+    addPartyDetailRow(rows, 'Controllers', uniqueParties(normalizePartyObjects(event.actors, 'controller').concat(partiesWithRole(event.parties, 'controller'))));
+  }
+  if (!rows.length) return null;
+  return el('dl', { className: 'tx-detail-summary' }, rows.flatMap(row => [
+    el('dt', {}, row.label),
+    el('dd', {}, row.value)
+  ]));
+}
+
+function addDetailRow(rows, label, value) {
+  if (!value) return;
+  rows.push({ label, value });
+}
+
+function addPartyDetailRow(rows, label, parties) {
+  const unique = uniqueParties(parties || []);
+  if (!unique.length) return;
+  rows.push({
+    label,
+    value: el('span', { className: 'chip-row compact' }, unique.map(party => partyChip(party)))
+  });
+}
+
+function eventPrimaryActors(event) {
+  return primaryActorsForKind(event && event.kind, event && event.parties, event && event.actors);
+}
+
+function primaryActorsForKind(kind, parties, fallbackActors) {
+  const fallback = normalizePartyObjects(fallbackActors, 'controller');
+  const kindText = String(kind || '');
+  if (kindText === 'Create') {
+    const signatories = partiesWithRole(parties, 'signatory');
+    return signatories.length ? signatories : fallback;
+  }
+  if (kindText === 'Exercise') {
+    const controllers = fallback.concat(partiesWithRole(parties, 'controller'));
+    return uniqueParties(controllers);
+  }
+  return fallback.length ? fallback : partiesWithRole(parties, 'signatory');
+}
+
+function partiesWithRole(parties, role) {
+  const wanted = cleanRole(role);
+  return uniqueParties((parties || []).filter(party => partyRoleLabels(party && party.roles).includes(wanted)));
+}
+
+function normalizePartyObjects(parties, role) {
+  return (parties || [])
+    .map(party => typeof party === 'string' ? { name: cleanPartyValue(party), roles: role ? [role] : [] } : party)
+    .filter(party => party && party.name && looksLikePartyValue(party.name));
+}
+
+function uniqueParties(parties) {
+  const map = new Map();
+  for (const party of normalizePartyObjects(parties)) {
+    const name = cleanPartyValue(party.name);
+    if (!name) continue;
+    const existing = map.get(name) || { name, roles: [] };
+    for (const role of partyRoleLabels(party.roles)) {
+      if (!existing.roles.includes(role)) existing.roles.push(role);
+    }
+    map.set(name, existing);
+  }
+  return Array.from(map.values());
 }
 
 function txParty(name) {
@@ -1987,9 +2095,12 @@ if (typeof module !== 'undefined') {
     roleDescription,
     classifyDisclosureState,
     synthesizeTransactionsFromContracts,
+    transactionEventFromContract,
     transactionEventsFromText,
     damlTransactionsFromText,
     inferTransactionEvent,
+    partiesWithRole,
+    eventPrimaryActors,
     mergeTransactionGroups,
     flattenEvents,
     consoleLinesFromTransactionTraceText,

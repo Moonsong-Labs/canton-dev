@@ -121,6 +121,33 @@ class CantonSandboxPanelTest : BasePlatformTestCase() {
         }
     }
 
+    fun `test panel reloads when profile service publishes updated profile`() {
+        val root = java.nio.file.Path.of(project.basePath!!)
+        val service = SandboxProfileService.getInstance(project)
+        val baseProfile = SandboxDefaults.newProfile(root).apply {
+            id = "panel-refresh-test"
+            name = "Panel Refresh Test"
+            generatedPath = root.resolve(".canton-sandboxes/panel-refresh-test").toString()
+        }
+        service.loadState(SandboxProfileService.State(mutableListOf(baseProfile), baseProfile.id))
+        val panel = CantonSandboxPanel(project)
+
+        try {
+            val current = panel.privateField<SandboxProfile>("currentProfile")
+            val updated = current.copy(
+                participants = (current.participants + ParticipantNode("auditor", "auditor", 5032, 5031, 7578)).toMutableList()
+            )
+
+            service.upsert(updated)
+
+            val participantTable = panel.privateField<JBTable>("participantTable")
+            assertEquals(2, panel.privateField<SandboxProfile>("currentProfile").participants.size)
+            assertEquals("auditor", participantTable.getValueAt(1, 0))
+        } finally {
+            panel.dispose()
+        }
+    }
+
     fun `test network renderers map participants syncs and connections`() {
         val panel = CantonSandboxPanel(project)
 

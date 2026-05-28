@@ -59,6 +59,28 @@ assert.deepStrictEqual(webview.partiesForContract([
   { name: 'operator-9b3970be', roles: ['signatory'] },
   { name: 'public-40b5f04b', roles: ['divulged'] }
 ]);
+assert.deepStrictEqual(webview.partiesWithRole([
+  { name: 'deposit-compliance-40bcf2e7', roles: ['signatory'] },
+  { name: 'deposit-lender-49310e6c', roles: ['observer'] },
+  { name: 'deposit-operator-901d787a', roles: ['observer'] }
+], 'signatory').map(party => party.name), ['deposit-compliance-40bcf2e7']);
+const createFromContract = webview.transactionEventFromContract({
+  id: '#1:1',
+  archived: false,
+  templateShort: 'KYCAttestation',
+  template: 'Vault.Component.IKYCPolicy:KYCAttestation',
+  parties: [
+    { name: 'deposit-compliance-40bcf2e7', roles: ['signatory'] },
+    { name: 'deposit-lender-49310e6c', roles: ['observer'] }
+  ],
+  fields: []
+});
+assert.deepStrictEqual(createFromContract.actors.map(party => party.name), ['deposit-compliance-40bcf2e7']);
+assert.deepStrictEqual(webview.eventPrimaryActors({
+  kind: 'Exercise',
+  actors: [{ name: 'deposit-compliance-40bcf2e7', roles: ['controller'] }],
+  parties: [{ name: 'deposit-lender-49310e6c', roles: ['observer'] }]
+}).map(party => party.name), ['deposit-compliance-40bcf2e7']);
 assert.deepStrictEqual(webview.disclosurePartiesForContracts([
   {
     fields: [{ name: 'public', value: "'public-40b5f04b'" }],

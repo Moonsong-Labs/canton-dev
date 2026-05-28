@@ -35,11 +35,40 @@ class SandboxProfileServiceTest : BasePlatformTestCase() {
         Files.writeString(root.resolve("daml.yaml"), "sdk-version: 3.4.11\nname: detected-sandbox\n")
         Files.writeString(root.resolve("managed-sandbox-profile.json"), detectedProfileJson(root))
 
-        val selected = SandboxProfileService.getInstance(project).selectedProfile()
+        val service = SandboxProfileService.getInstance(project)
+        service.loadState(SandboxProfileService.State())
+        val selected = service.selectedProfile()
 
         assertTrue(selected.bindings.any { it.participantId == "bridge" && it.synchronizerId == "global" && it.connected })
         assertFalse(selected.bindings.any { it.participantId == "issuer" && it.synchronizerId == "global" && it.connected })
         assertFalse(selected.bindings.any { it.participantId == "investor" && it.synchronizerId == "global" && it.connected })
+    }
+
+    fun testRefreshDetectedProfileReloadsChangedJson() {
+        val root = Path.of(project.basePath!!)
+        val generated = root.resolve(".canton-sandboxes/private-settlement")
+        Files.createDirectories(generated)
+        Files.writeString(root.resolve("daml.yaml"), "sdk-version: 3.4.11\nname: detected-sandbox\n")
+        val profileJson = generated.resolve("profile.json")
+        Files.writeString(profileJson, detectedProfileJson(root))
+
+        val service = SandboxProfileService.getInstance(project)
+        service.loadState(SandboxProfileService.State())
+        assertEquals(3, service.selectedProfile().participants.size)
+
+        Files.writeString(
+            profileJson,
+            detectedProfileJson(root).replace(
+                """{ "id": "bridge", "name": "bridge", "adminPort": 7432, "ledgerPort": 7431, "jsonPort": 8577 }""",
+                """{ "id": "bridge", "name": "bridge", "adminPort": 7432, "ledgerPort": 7431, "jsonPort": 8577 },
+            { "id": "auditor", "name": "auditor", "adminPort": 7442, "ledgerPort": 7441, "jsonPort": 8578 }"""
+            )
+        )
+
+        service.refreshDetectedProfiles()
+
+        assertEquals(4, service.selectedProfile().participants.size)
+        assertTrue(service.selectedProfile().participants.any { it.id == "auditor" })
     }
 
     private fun detectedProfileJson(root: Path): String =
