@@ -52,10 +52,10 @@ class SandboxGeneratorTest {
         assertTrue(generated.localRunScript.toFile().canExecute())
         assertTrue("Empty top-level logs directory should not be generated.", !Files.exists(generated.root.resolve("logs")))
         assertTrue("Memory storage does not need a data directory.", !Files.exists(generated.root.resolve("data")))
-        assertTrue("DAR cache should be created only when a DAR is copied.", !Files.exists(generated.root.resolve("dars")))
+        assertTrue("DARs are referenced in place; no dars/ directory is generated.", !Files.exists(generated.root.resolve("dars")))
         assertEquals(generated.root.resolve("local/log"), generated.logsDir)
         assertTrue(gitignore.contains("local/log/"))
-        assertTrue(gitignore.contains("dars/"))
+        assertFalse("dars/ is no longer generated, so it must not be gitignored.", gitignore.contains("dars/"))
         assertTrue(gitignore.contains("participants.json"))
         assertTrue(profileJson.contains(""""workspacePath": ".""""))
         assertTrue(profileJson.contains(""""generatedPath": ".canton-sandboxes/test-sandbox""""))
@@ -96,7 +96,7 @@ class SandboxGeneratorTest {
             darAssignments.add(DarAssignment(".daml/dist/example.dar", mutableListOf(participants[0].id)))
         }
 
-        val uploadScript = SandboxGenerator().uploadScript(profile, emptyMap())
+        val uploadScript = SandboxGenerator().uploadScript(profile)
 
         assertTrue(uploadScript.contains("issuer.dars.upload(\".daml/dist/example.dar\", synchronizerId = Some(issuer.synchronizers.id_of(\"global\")))"))
         assertTrue(uploadScript.contains("issuer.dars.upload(\".daml/dist/example.dar\", synchronizerId = Some(issuer.synchronizers.id_of(\"sync2\")))"))
@@ -104,29 +104,23 @@ class SandboxGeneratorTest {
     }
 
     @Test
-    fun `regenerating profile clears stale copied dars`() {
-        val root = Files.createTempDirectory("managed-canton-dars-clean")
+    fun `dars are referenced in place without copying`() {
+        val root = Files.createTempDirectory("managed-canton-dars-inplace")
         val dar1 = Files.writeString(root.resolve("one.dar"), "one")
-        val dar2 = Files.writeString(root.resolve("two.dar"), "two")
         val profile = SandboxDefaults.newProfile(root).apply {
-            id = "dar-clean"
-            generatedPath = root.resolve(".canton-sandboxes/dar-clean").toString()
+            id = "dar-inplace"
+            generatedPath = root.resolve(".canton-sandboxes/dar-inplace").toString()
             darAssignments.add(DarAssignment(dar1.toString(), mutableListOf(participants[0].id)))
         }
 
-        val generator = SandboxGenerator()
-        val first = generator.generate(profile)
-        assertTrue(Files.exists(first.darsDir.resolve("one.dar")))
-        assertTrue(Files.readString(first.localBootstrap).contains("issuer.dars.upload(\"../dars/one.dar\""))
-        assertTrue(Files.readString(first.uploadScript).contains("issuer.dars.upload(\"dars/one.dar\""))
-        assertFalse(Files.readString(first.profileJson).contains(root.toString()))
+        val generated = SandboxGenerator().generate(profile)
 
-        profile.darAssignments.clear()
-        profile.darAssignments.add(DarAssignment(dar2.toString(), mutableListOf(profile.participants[0].id)))
-        val second = generator.generate(profile)
-
-        assertTrue(!Files.exists(second.darsDir.resolve("one.dar")))
-        assertTrue(Files.exists(second.darsDir.resolve("two.dar")))
+        assertFalse("DARs must not be copied into a dars/ directory.", Files.exists(generated.root.resolve("dars")))
+        val bootstrapDarPath = SandboxPaths.relativePath(generated.localBootstrap.parent, dar1)
+        val uploadDarPath = SandboxPaths.relativePath(generated.root, dar1)
+        assertTrue(Files.readString(generated.localBootstrap).contains("issuer.dars.upload(\"$bootstrapDarPath\""))
+        assertTrue(Files.readString(generated.uploadScript).contains("issuer.dars.upload(\"$uploadDarPath\""))
+        assertFalse(Files.readString(generated.profileJson).contains(root.toString()))
     }
 
     @Test
@@ -144,9 +138,12 @@ class SandboxGeneratorTest {
         val generated = SandboxGenerator(root).generate(profile)
 
         assertEquals(root.resolve(".canton-sandboxes/relative-profile"), generated.root)
-        assertTrue(Files.exists(generated.darsDir.resolve("relative.dar")))
-        assertTrue(Files.readString(generated.localBootstrap).contains("issuer.dars.upload(\"../dars/relative.dar\""))
-        assertTrue(Files.readString(generated.uploadScript).contains("issuer.dars.upload(\"dars/relative.dar\""))
+        assertFalse("DARs must not be copied into a dars/ directory.", Files.exists(generated.root.resolve("dars")))
+        val sourceDar = root.resolve("dist/relative.dar")
+        val bootstrapDarPath = SandboxPaths.relativePath(generated.localBootstrap.parent, sourceDar)
+        val uploadDarPath = SandboxPaths.relativePath(generated.root, sourceDar)
+        assertTrue(Files.readString(generated.localBootstrap).contains("issuer.dars.upload(\"$bootstrapDarPath\""))
+        assertTrue(Files.readString(generated.uploadScript).contains("issuer.dars.upload(\"$uploadDarPath\""))
         assertFalse(Files.readString(generated.profileJson).contains(root.toString()))
     }
 

@@ -127,8 +127,7 @@ data class SandboxGeneratedFiles(
     val uploadScript: Path,
     val allocationScript: Path,
     val statusScript: Path,
-    val logsDir: Path,
-    val darsDir: Path
+    val logsDir: Path
 )
 
 object SandboxDefaults {
