@@ -2,18 +2,10 @@ package com.moonsonglabs.daml.lsp
 
 import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.project.Project
-import com.moonsonglabs.daml.DamlBundle
-import com.moonsonglabs.daml.DamlNotifier
 import com.moonsonglabs.daml.scriptresults.VirtualResourceManager
-import com.redhat.devtools.lsp4ij.LanguageServerManager
-import com.redhat.devtools.lsp4ij.LanguageServerManager.StopOptions
-import com.redhat.devtools.lsp4ij.ServerStatus
-import com.redhat.devtools.lsp4ij.client.LanguageClientImpl
+import com.intellij.platform.lsp.api.Lsp4jClient
+import com.intellij.platform.lsp.api.LspServerNotificationsHandler
 import org.eclipse.lsp4j.jsonrpc.services.JsonNotification
-import java.util.concurrent.Executors
-import java.util.concurrent.ScheduledExecutorService
-import java.util.concurrent.ScheduledFuture
-import java.util.concurrent.TimeUnit
 
 /**
  * Custom DAML LanguageClient.
@@ -21,68 +13,11 @@ import java.util.concurrent.TimeUnit
  * Responsibilities:
  *  - Handle DAML's non-standard server→client notifications (the `daml/virtualResource/...`
  *    and `daml/sdkInstall/...` families) so the Script Results panel can stay in sync.
- *  - Run a 60s keep-alive watchdog by sending `daml/keepAlive` requests; if no response
- *    within 120s, log a warning and request LSP4IJ to restart the server.
- *
- * Why the watchdog: matches the VSCode extension's behavior. Without it, a hung damlc
- * process would silently stop responding to file edits and the user would see stale
- * diagnostics with no recovery.
  */
-class DamlLanguageClient(project: Project) : LanguageClientImpl(project) {
-
-    private val scheduler: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor { r ->
-        Thread(r, "DAML-keepAlive").apply { isDaemon = true }
-    }
-    private var keepAliveTask: ScheduledFuture<*>? = null
-
-    override fun handleServerStatusChanged(serverStatus: ServerStatus) {
-        when (serverStatus) {
-            ServerStatus.started -> startKeepAlive()
-            ServerStatus.stopping, ServerStatus.stopped -> cancelKeepAlive()
-            else -> {}
-        }
-    }
-
-    override fun dispose() {
-        cancelKeepAlive()
-        scheduler.shutdownNow()
-        super.dispose()
-    }
-
-    private fun startKeepAlive() {
-        cancelKeepAlive()
-        keepAliveTask = scheduler.scheduleWithFixedDelay({ tick() }, 60, 60, TimeUnit.SECONDS)
-    }
-
-    private fun cancelKeepAlive() {
-        keepAliveTask?.cancel(false)
-        keepAliveTask = null
-    }
-
-    private fun tick() {
-        try {
-            LanguageServerManager.getInstance(project)
-                .getLanguageServer("daml")
-                .thenAccept { item ->
-                    val server = item?.server as? DamlServerInterface ?: return@thenAccept
-                    server.keepAlive()
-                        .orTimeout(120, TimeUnit.SECONDS)
-                        .whenComplete { _, err ->
-                            if (err != null) {
-                                thisLogger().warn("DAML keep-alive failed; restarting server", err)
-                                DamlNotifier.warn(
-                                    project,
-                                    DamlBundle.message("daml.notification.server.unresponsive"))
-                                val mgr = LanguageServerManager.getInstance(project)
-                                mgr.stop("daml", StopOptions().setWillDisable(false))
-                                mgr.start("daml")
-                            }
-                        }
-                }
-        } catch (t: Throwable) {
-            thisLogger().debug("DAML keep-alive tick suppressed", t)
-        }
-    }
+class DamlLanguageClient(
+    private val project: Project,
+    serverNotificationsHandler: LspServerNotificationsHandler
+) : Lsp4jClient(serverNotificationsHandler) {
 
     // ---- DAML virtual-resource server-pushed notifications ----
 

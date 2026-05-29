@@ -72,7 +72,7 @@ class SandboxSessionService(private val project: Project) : Disposable {
             runCatching {
                 stopCurrent(wait = true)
                 val runtimeProfile = runtimeProfile(profile)
-                val validation = validator.validate(runtimeProfile)
+                val validation = validator.validate(runtimeProfile, checkDarContents = false)
                 if (!validation.ok) {
                     val details = validation.checks.filterNot { it.ok }.joinToString("\n") { "${it.name}: ${it.detail}" }
                     throw ExecutionException("${validation.message}\n$details")

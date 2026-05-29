@@ -22,12 +22,16 @@ class SandboxRuntimeValidator(private val project: Project) {
             "Sandbox validation failed: " + checks.filterNot { it.ok }.joinToString(", ") { it.name }
     }
 
-    fun validate(profile: SandboxProfile, generated: SandboxGeneratedFiles? = null): Result {
+    fun validate(
+        profile: SandboxProfile,
+        generated: SandboxGeneratedFiles? = null,
+        checkDarContents: Boolean = true
+    ): Result {
         val runtimeProfile = SandboxProjectPaths.runtimeProfile(profile, DamlWorkspaceService.getInstance(project))
         val checks = mutableListOf<Check>()
         checks += validateTopology(runtimeProfile)
         checks += validatePorts(runtimeProfile)
-        checks += validateDars(runtimeProfile)
+        checks += validateDars(runtimeProfile, checkDarContents)
         checks += validateCanton()
         generated?.let { checks += validateGeneratedFiles(it) }
         return Result(checks)
@@ -112,7 +116,7 @@ class SandboxRuntimeValidator(private val project: Project) {
         return listOf(Check("ports", blocked.isEmpty(), if (blocked.isEmpty()) "${ports.size} ports available" else "in use: ${blocked.joinToString { "${it.first}=${it.second}" }}"))
     }
 
-    private fun validateDars(profile: SandboxProfile): List<Check> {
+    private fun validateDars(profile: SandboxProfile, checkDarContents: Boolean): List<Check> {
         val assigned = profile.darAssignments.map { it.darPath }.distinct()
         val resolved = assigned.associateWith { SandboxPaths.resolveProfilePath(it, profile, projectRoot()) }
         val missing = resolved.filterNot { Files.isRegularFile(it.value) }.keys
@@ -122,6 +126,12 @@ class SandboxRuntimeValidator(private val project: Project) {
             if (missing.isEmpty()) "${profile.darAssignments.size} assignment(s)" else "missing: ${missing.joinToString()}"
         )
         if (missing.isNotEmpty() || assigned.isEmpty()) return listOf(existence)
+        if (!checkDarContents) {
+            return listOf(
+                existence,
+                Check("DPM validate-dar", true, "skipped during Start; run Validate Profile for SDK content validation")
+            )
+        }
         return listOf(existence, validateDarContents(resolved.values.toList()))
     }
 
