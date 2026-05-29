@@ -7,6 +7,7 @@ import java.nio.file.Path
 class SandboxProfileServiceTest : BasePlatformTestCase() {
     fun testDetectedManagedProfileBecomesTheActiveProfile() {
         val root = Path.of(project.basePath!!)
+        resetDetectedProfiles(root)
         Files.createDirectories(root)
         Files.writeString(root.resolve("daml.yaml"), "sdk-version: 3.4.11\nname: detected-sandbox\n")
         Files.writeString(root.resolve("managed-sandbox-profile.json"), detectedProfileJson(root))
@@ -22,15 +23,44 @@ class SandboxProfileServiceTest : BasePlatformTestCase() {
 
         assertEquals("private-settlement", selected.id)
         assertEquals("Private Settlement Bridge", selected.name)
-        assertEquals(root.toString(), selected.workspacePath)
-        assertEquals(root.resolve(".canton-sandboxes/private-settlement").toString(), selected.generatedPath)
+        assertEquals(".", selected.workspacePath)
+        assertEquals(".canton-sandboxes/private-settlement", selected.generatedPath)
+        assertEquals(".daml/dist/private-settlement-bridge-0.1.0.dar", selected.darAssignments.single().darPath)
         assertEquals(3, selected.participants.size)
         assertEquals(2, selected.synchronizers.size)
         assertTrue(service.profiles().any { it.id == "persisted-default" })
     }
 
+    fun testDetectedRelativeWorkspacePathIsAnchoredToDetectedWorkspace() {
+        val root = Path.of(project.basePath!!)
+        resetDetectedProfiles(root)
+        val workspace = root.resolve("vaultkit")
+        Files.createDirectories(workspace.resolve(".daml/dist"))
+        Files.writeString(workspace.resolve("daml.yaml"), "sdk-version: 3.4.11\nname: detected-sandbox\n")
+        Files.writeString(workspace.resolve(".daml/dist/private-settlement-bridge-0.1.0.dar"), "dar")
+        Files.writeString(
+            workspace.resolve("managed-sandbox-profile.json"),
+            detectedProfileJson(workspace)
+                .replace(""""workspacePath": "",""", """"workspacePath": ".",""")
+                .replace(
+                    workspace.resolve(".daml/dist/private-settlement-bridge-0.1.0.dar").toString(),
+                    ".daml/dist/private-settlement-bridge-0.1.0.dar"
+                )
+        )
+
+        val service = SandboxProfileService.getInstance(project)
+        service.loadState(SandboxProfileService.State())
+        val selected = service.selectedProfile()
+
+        assertEquals("vaultkit", selected.workspacePath)
+        assertEquals(".canton-sandboxes/private-settlement", selected.generatedPath)
+        assertEquals(".daml/dist/private-settlement-bridge-0.1.0.dar", selected.darAssignments.single().darPath)
+        assertTrue(Files.isRegularFile(root.resolve(selected.workspacePath).resolve(selected.darAssignments.single().darPath)))
+    }
+
     fun testDetectedProfileKeepsExplicitParticipantSyncBindings() {
         val root = Path.of(project.basePath!!)
+        resetDetectedProfiles(root)
         Files.createDirectories(root)
         Files.writeString(root.resolve("daml.yaml"), "sdk-version: 3.4.11\nname: detected-sandbox\n")
         Files.writeString(root.resolve("managed-sandbox-profile.json"), detectedProfileJson(root))
@@ -46,6 +76,7 @@ class SandboxProfileServiceTest : BasePlatformTestCase() {
 
     fun testRefreshDetectedProfileReloadsChangedJson() {
         val root = Path.of(project.basePath!!)
+        resetDetectedProfiles(root)
         val generated = root.resolve(".canton-sandboxes/private-settlement")
         Files.createDirectories(generated)
         Files.writeString(root.resolve("daml.yaml"), "sdk-version: 3.4.11\nname: detected-sandbox\n")
@@ -119,4 +150,12 @@ class SandboxProfileServiceTest : BasePlatformTestCase() {
           "generatedPath": ""
         }
         """.trimIndent()
+
+    private fun resetDetectedProfiles(root: Path) {
+        root.resolve("managed-sandbox-profile.json").toFile().delete()
+        root.resolve(".canton-sandboxes").toFile().deleteRecursively()
+        root.resolve("vaultkit").toFile().deleteRecursively()
+        root.resolve("daml.yaml").toFile().delete()
+        root.resolve("multi-package.yaml").toFile().delete()
+    }
 }

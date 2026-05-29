@@ -49,7 +49,10 @@ data class LedgerExplorerSnapshot(
     val warnings: List<String>
 )
 
-class SandboxLedgerExplorer(private val client: JsonApiClient = JsonApiClient()) {
+class SandboxLedgerExplorer(
+    private val client: JsonApiClient = JsonApiClient(),
+    private val projectRoot: Path? = null
+) {
     fun fetch(profile: SandboxProfile, participant: ParticipantNode, token: String?): LedgerExplorerSnapshot {
         val endpoint = EndpointBuilder.participantEndpoints(profile)
             .firstOrNull { it.nodeId == participant.id && it.kind == "json" }
@@ -272,11 +275,7 @@ class SandboxLedgerExplorer(private val client: JsonApiClient = JsonApiClient())
     }
 
     private fun generatedRoot(profile: SandboxProfile): Path? =
-        when {
-            profile.generatedPath.isNotBlank() -> Path.of(profile.generatedPath)
-            profile.workspacePath.isNotBlank() -> Path.of(profile.workspacePath, SandboxDefaults.GENERATED_DIR, profile.id)
-            else -> null
-        }
+        SandboxPaths.generatedRoot(profile, projectRoot)
 
     private fun prettyJson(raw: String): String =
         runCatching { gson.toJson(JsonParser.parseString(raw)) }.getOrDefault(raw)

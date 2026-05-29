@@ -14,6 +14,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Key
 import com.moonsonglabs.daml.runtime.RuntimeEnvironment
 import com.moonsonglabs.daml.settings.DamlProjectSettings
+import com.moonsonglabs.daml.workspace.DamlWorkspaceService
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
@@ -37,7 +38,6 @@ data class SandboxSessionState(
 
 @Service(Service.Level.PROJECT)
 class SandboxSessionService(private val project: Project) : Disposable {
-    private val generator = SandboxGenerator()
     private val validator = SandboxRuntimeValidator.getInstance(project)
     private val listeners = CopyOnWriteArrayList<(SandboxSessionState) -> Unit>()
     private val executor = Executors.newCachedThreadPool { r ->
@@ -60,9 +60,10 @@ class SandboxSessionService(private val project: Project) : Disposable {
     }
 
     fun generate(profile: SandboxProfile): SandboxGeneratedFiles {
-        update(status = SandboxSessionStatus.GENERATING, profile = profile, message = "Generating sandbox files")
-        val generated = generator.generate(profile)
-        update(status = SandboxSessionStatus.STOPPED, profile = profile, generated = generated, message = "Generated ${generated.root}")
+        val runtimeProfile = runtimeProfile(profile)
+        update(status = SandboxSessionStatus.GENERATING, profile = runtimeProfile, message = "Generating sandbox files")
+        val generated = generator().generate(runtimeProfile)
+        update(status = SandboxSessionStatus.STOPPED, profile = runtimeProfile, generated = generated, message = "Generated ${generated.root}")
         return generated
     }
 
@@ -70,14 +71,15 @@ class SandboxSessionService(private val project: Project) : Disposable {
         executor.execute {
             runCatching {
                 stopCurrent(wait = true)
-                val validation = validator.validate(profile)
+                val runtimeProfile = runtimeProfile(profile)
+                val validation = validator.validate(runtimeProfile)
                 if (!validation.ok) {
                     val details = validation.checks.filterNot { it.ok }.joinToString("\n") { "${it.name}: ${it.detail}" }
                     throw ExecutionException("${validation.message}\n$details")
                 }
-                val generated = generate(profile)
+                val generated = generate(runtimeProfile)
                 val command = localCantonCommand(generated)
-                startProcess(profile, generated, command, generated.localConfig.parent.toFile().absolutePath)
+                startProcess(runtimeProfile, generated, command, generated.localConfig.parent.toFile().absolutePath)
             }.onFailure {
                 appendLog("Failed to start local sandbox: ${it.message}\n")
                 update(status = SandboxSessionStatus.FAILED, profile = profile, message = it.message ?: "Local start failed")
@@ -95,7 +97,7 @@ class SandboxSessionService(private val project: Project) : Disposable {
     fun clean(profile: SandboxProfile) {
         executor.execute {
             stopCurrent(wait = true)
-            val root = generator.generatedRoot(profile)
+            val root = generator().generatedRoot(runtimeProfile(profile))
             runCatching {
                 root.resolve("local").resolve("log").toFile().deleteRecursively()
                 root.resolve("logs").toFile().deleteRecursively()
@@ -131,7 +133,7 @@ class SandboxSessionService(private val project: Project) : Disposable {
     fun fetchLedgerSnapshot(profile: SandboxProfile, participantName: String, token: String?): LedgerExplorerSnapshot {
         val participant = profile.participants.firstOrNull { it.name == participantName }
             ?: throw ExecutionException("Participant $participantName is not part of profile ${profile.name}.")
-        return SandboxLedgerExplorer().fetch(profile, participant, token)
+        return SandboxLedgerExplorer(projectRoot = DamlWorkspaceService.getInstance(project).projectRoot()).fetch(profile, participant, token)
     }
 
     private fun startProcess(
@@ -183,11 +185,17 @@ class SandboxSessionService(private val project: Project) : Disposable {
         return GeneralCommandLine(base + listOf(
             "daemon",
             "-c",
-            generated.localConfig.toString(),
+            generated.localConfig.fileName.toString(),
             "--bootstrap",
-            generated.localBootstrap.toString()
+            generated.localBootstrap.fileName.toString()
         ))
     }
+
+    private fun generator(): SandboxGenerator =
+        SandboxGenerator(DamlWorkspaceService.getInstance(project).projectRoot())
+
+    private fun runtimeProfile(profile: SandboxProfile): SandboxProfile =
+        SandboxProjectPaths.runtimeProfile(profile, DamlWorkspaceService.getInstance(project))
 
     private fun javaExecutable(): String {
         val javaHome = System.getProperty("java.home")?.takeIf { it.isNotBlank() }

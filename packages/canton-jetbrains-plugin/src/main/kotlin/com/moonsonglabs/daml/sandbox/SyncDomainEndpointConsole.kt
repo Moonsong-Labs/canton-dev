@@ -16,6 +16,7 @@ import com.intellij.ui.components.JBTextArea
 import com.intellij.util.ui.JBUI
 import com.moonsonglabs.daml.runtime.RuntimeEnvironment
 import com.moonsonglabs.daml.settings.DamlProjectSettings
+import com.moonsonglabs.daml.workspace.DamlWorkspaceService
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Component
@@ -234,7 +235,7 @@ internal class SyncDomainDiagnosticRunner(private val project: Project) {
             )
         ).withCharset(StandardCharsets.UTF_8)
         profile.generatedPath.takeIf { it.isNotBlank() }
-            ?.let { Path.of(it, "local") }
+            ?.let { SandboxPaths.generatedRoot(profile, DamlWorkspaceService.getInstance(project).projectRoot()).resolve("local") }
             ?.takeIf(Files::isDirectory)
             ?.let { command.withWorkDirectory(it.toFile()) }
         RuntimeEnvironment.applyLocalTools(command, settings)

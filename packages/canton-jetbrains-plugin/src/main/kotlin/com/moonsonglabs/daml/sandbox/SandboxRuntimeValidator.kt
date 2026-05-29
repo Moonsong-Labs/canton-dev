@@ -7,6 +7,7 @@ import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.execution.process.CapturingProcessHandler
 import com.moonsonglabs.daml.runtime.RuntimeEnvironment
 import com.moonsonglabs.daml.settings.DamlProjectSettings
+import com.moonsonglabs.daml.workspace.DamlWorkspaceService
 import java.net.ServerSocket
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
@@ -22,10 +23,11 @@ class SandboxRuntimeValidator(private val project: Project) {
     }
 
     fun validate(profile: SandboxProfile, generated: SandboxGeneratedFiles? = null): Result {
+        val runtimeProfile = SandboxProjectPaths.runtimeProfile(profile, DamlWorkspaceService.getInstance(project))
         val checks = mutableListOf<Check>()
-        checks += validateTopology(profile)
-        checks += validatePorts(profile)
-        checks += validateDars(profile)
+        checks += validateTopology(runtimeProfile)
+        checks += validatePorts(runtimeProfile)
+        checks += validateDars(runtimeProfile)
         checks += validateCanton()
         generated?.let { checks += validateGeneratedFiles(it) }
         return Result(checks)
@@ -112,14 +114,15 @@ class SandboxRuntimeValidator(private val project: Project) {
 
     private fun validateDars(profile: SandboxProfile): List<Check> {
         val assigned = profile.darAssignments.map { it.darPath }.distinct()
-        val missing = assigned.filterNot { Files.isRegularFile(Path.of(it)) }
+        val resolved = assigned.associateWith { SandboxPaths.resolveProfilePath(it, profile, projectRoot()) }
+        val missing = resolved.filterNot { Files.isRegularFile(it.value) }.keys
         val existence = Check(
             "DAR files",
             missing.isEmpty(),
             if (missing.isEmpty()) "${profile.darAssignments.size} assignment(s)" else "missing: ${missing.joinToString()}"
         )
         if (missing.isNotEmpty() || assigned.isEmpty()) return listOf(existence)
-        return listOf(existence, validateDarContents(assigned.map { Path.of(it) }))
+        return listOf(existence, validateDarContents(resolved.values.toList()))
     }
 
     private fun validateDarContents(dars: List<Path>): Check {
@@ -179,6 +182,9 @@ class SandboxRuntimeValidator(private val project: Project) {
         if (port <= 0 || port > 65535) return false
         return runCatching { ServerSocket(port).use { true } }.getOrDefault(false)
     }
+
+    private fun projectRoot(): Path? =
+        DamlWorkspaceService.getInstance(project).projectRoot()
 
     companion object {
         fun getInstance(project: Project): SandboxRuntimeValidator = project.service()

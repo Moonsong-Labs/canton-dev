@@ -47,7 +47,10 @@ class SandboxProfileService(private val project: Project) : PersistentStateCompo
         })
     }
 
-    override fun getState(): State = state
+    override fun getState(): State {
+        state.profiles.forEach(::normalizeProfile)
+        return state
+    }
 
     override fun loadState(state: State) {
         state.profiles.forEach(::normalizeProfile)
@@ -180,6 +183,9 @@ class SandboxProfileService(private val project: Project) : PersistentStateCompo
         if (profile.id.isBlank()) {
             profile.id = path.parent?.fileName?.toString()?.takeIf { it.isNotBlank() } ?: SandboxDefaults.newProfile(null).id
         }
+        if (workspace != null) {
+            profile.workspacePath = resolveAgainst(workspace, profile.workspacePath.ifBlank { "." }).toString()
+        }
         if (profile.workspacePath.isBlank()) {
             profile.workspacePath = workspace?.toString().orEmpty()
         }
@@ -193,6 +199,11 @@ class SandboxProfileService(private val project: Project) : PersistentStateCompo
             }
         }
         normalizeProfile(profile)
+    }
+
+    private fun resolveAgainst(base: Path, rawPath: String): Path {
+        val path = Path.of(rawPath)
+        return if (path.isAbsolute) path.normalize() else base.resolve(path).normalize()
     }
 
     private fun upsertDetected(profile: SandboxProfile) {
@@ -227,7 +238,10 @@ class SandboxProfileService(private val project: Project) : PersistentStateCompo
     }
 
     private fun detectedProfileKey(detectedProfile: DetectedProfile): String =
-        detectedProfile.profile.generatedPath.ifBlank { detectedProfile.profile.id }
+        SandboxPaths.generatedRoot(
+            detectedProfile.profile,
+            detectedProfile.workspace ?: DamlWorkspaceService.getInstance(project).projectRoot()
+        ).toString()
 
     private fun inferredWorkspace(path: Path): Path? =
         when {
@@ -268,11 +282,27 @@ class SandboxProfileService(private val project: Project) : PersistentStateCompo
                 }
             }
         }
-        if (profile.workspacePath.isBlank()) {
-            profile.workspacePath = DamlWorkspaceService.getInstance(project).projectRoot()?.toString().orEmpty()
+        val projectRoot = DamlWorkspaceService.getInstance(project).projectRoot()
+        val workspace = SandboxPaths.workspaceRoot(profile, projectRoot)
+        if (workspace != null) {
+            profile.workspacePath = if (projectRoot != null) SandboxPaths.relativePath(projectRoot, workspace) else "."
+        } else {
+            profile.workspacePath = ""
         }
-        if (profile.generatedPath.isBlank() && profile.workspacePath.isNotBlank()) {
-            profile.generatedPath = java.nio.file.Path.of(profile.workspacePath, SandboxDefaults.GENERATED_DIR, profile.id).toString()
+        val generated = if (profile.generatedPath.isBlank()) {
+            workspace?.resolve(SandboxDefaults.GENERATED_DIR)?.resolve(profile.id)
+        } else {
+            SandboxPaths.generatedRoot(profile, projectRoot)
+        }
+        if (generated != null && workspace != null) {
+            profile.generatedPath = SandboxPaths.relativePath(workspace, generated)
+        } else if (profile.generatedPath.isBlank()) {
+            profile.generatedPath = ""
+        } else {
+            profile.generatedPath = SandboxPaths.invariantSeparators(java.nio.file.Path.of(profile.generatedPath).normalize().toString())
+        }
+        profile.darAssignments.forEach { assignment ->
+            assignment.darPath = SandboxPaths.relativeProfilePath(assignment.darPath, profile, projectRoot)
         }
         val participantIds = profile.participants.map { it.id }.toSet()
         val synchronizerIds = profile.synchronizers.map { it.id }.toSet()

@@ -15,6 +15,7 @@ import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.JBUI
+import com.moonsonglabs.daml.workspace.DamlWorkspaceService
 import java.awt.BorderLayout
 import java.awt.Color
 import java.awt.Component
@@ -96,11 +97,17 @@ internal object SandboxEndpointCatalog {
         }
     }
 
-    fun requestBody(preset: SandboxEndpointPreset, profile: SandboxProfile, participant: ParticipantNode, ledgerEnd: Long = 0L): String =
+    fun requestBody(
+        preset: SandboxEndpointPreset,
+        profile: SandboxProfile,
+        participant: ParticipantNode,
+        ledgerEnd: Long = 0L,
+        projectRoot: Path? = null
+    ): String =
         when (preset.id) {
             "active-contracts" -> gson.toJson(JsonObject().apply {
                 addProperty("activeAtOffset", ledgerEnd)
-                add("eventFormat", eventFormat(profile, participant))
+                add("eventFormat", eventFormat(profile, participant, projectRoot))
             })
             "updates" -> gson.toJson(JsonObject().apply {
                 addProperty("beginExclusive", 0)
@@ -108,7 +115,7 @@ internal object SandboxEndpointCatalog {
                 add("updateFormat", JsonObject().apply {
                     add("includeTransactions", JsonObject().apply {
                         addProperty("transactionShape", "TRANSACTION_SHAPE_ACS_DELTA")
-                        add("eventFormat", eventFormat(profile, participant))
+                        add("eventFormat", eventFormat(profile, participant, projectRoot))
                     })
                 })
             })
@@ -121,9 +128,9 @@ internal object SandboxEndpointCatalog {
                     addProperty("synchronizerId", "<full-synchronizer-id>")
                 }
             })
-            "submit-wait", "async-submit" -> gson.toJson(commandEnvelope(preset, profile, participant))
+            "submit-wait", "async-submit" -> gson.toJson(commandEnvelope(preset, profile, participant, projectRoot))
             "submit-transaction" -> gson.toJson(JsonObject().apply {
-                add("commands", commandEnvelope(preset, profile, participant))
+                add("commands", commandEnvelope(preset, profile, participant, projectRoot))
             })
             else -> ""
         }
@@ -139,8 +146,8 @@ internal object SandboxEndpointCatalog {
         runCatching { gson.toJson(JsonParser.parseString(body)) }
             .getOrElse { body }
 
-    fun parties(profile: SandboxProfile, participant: ParticipantNode): List<String> =
-        allocatedPartyIds(profile, participant)
+    fun parties(profile: SandboxProfile, participant: ParticipantNode, projectRoot: Path? = null): List<String> =
+        allocatedPartyIds(profile, participant, projectRoot)
             .ifEmpty {
                 profile.partyAllocations
                     .filter { it.participantId == participant.id }
@@ -149,8 +156,8 @@ internal object SandboxEndpointCatalog {
             }
             .ifEmpty { listOf("<party-id>") }
 
-    private fun allocatedPartyIds(profile: SandboxProfile, participant: ParticipantNode): List<String> {
-        val root = generatedRoot(profile) ?: return emptyList()
+    private fun allocatedPartyIds(profile: SandboxProfile, participant: ParticipantNode, projectRoot: Path?): List<String> {
+        val root = generatedRoot(profile, projectRoot)
         val path = root.resolve("participants.json")
         if (!Files.isRegularFile(path)) return emptyList()
         val hints = profile.partyAllocations
@@ -171,15 +178,16 @@ internal object SandboxEndpointCatalog {
         }.getOrDefault(emptyList())
     }
 
-    private fun generatedRoot(profile: SandboxProfile): Path? =
-        when {
-            profile.generatedPath.isNotBlank() -> Path.of(profile.generatedPath)
-            profile.workspacePath.isNotBlank() -> Path.of(profile.workspacePath, SandboxDefaults.GENERATED_DIR, profile.id)
-            else -> null
-        }
+    private fun generatedRoot(profile: SandboxProfile, projectRoot: Path?): Path =
+        SandboxPaths.generatedRoot(profile, projectRoot)
 
-    private fun commandEnvelope(preset: SandboxEndpointPreset, profile: SandboxProfile, participant: ParticipantNode): JsonObject {
-        val parties = parties(profile, participant)
+    private fun commandEnvelope(
+        preset: SandboxEndpointPreset,
+        profile: SandboxProfile,
+        participant: ParticipantNode,
+        projectRoot: Path?
+    ): JsonObject {
+        val parties = parties(profile, participant, projectRoot)
         val actAs = JsonArray().apply { add(parties.first()) }
         val readAs = JsonArray().apply { parties.drop(1).forEach(::add) }
         return JsonObject().apply {
@@ -199,10 +207,10 @@ internal object SandboxEndpointCatalog {
         }
     }
 
-    private fun eventFormat(profile: SandboxProfile, participant: ParticipantNode): JsonObject =
+    private fun eventFormat(profile: SandboxProfile, participant: ParticipantNode, projectRoot: Path?): JsonObject =
         JsonObject().apply {
             add("filtersByParty", JsonObject().apply {
-                parties(profile, participant).forEach { party ->
+                parties(profile, participant, projectRoot).forEach { party ->
                     add(party, JsonObject().apply { add("cumulative", JsonArray()) })
                 }
             })
@@ -467,7 +475,13 @@ internal class ParticipantEndpointConsole(
         methodField.text = preset.method
         pathField.text = preset.path
         bodyArea.text = if (currentProfile != null && currentParticipant != null) {
-            SandboxEndpointCatalog.requestBody(preset, currentProfile, currentParticipant, lastLedgerEnd)
+            SandboxEndpointCatalog.requestBody(
+                preset,
+                currentProfile,
+                currentParticipant,
+                lastLedgerEnd,
+                DamlWorkspaceService.getInstance(project).projectRoot()
+            )
         } else {
             ""
         }
