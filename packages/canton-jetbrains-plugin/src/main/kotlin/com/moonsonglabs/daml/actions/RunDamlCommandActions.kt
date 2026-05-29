@@ -52,7 +52,7 @@ abstract class RunDamlCommandAction(private val command: DamlCommand) : AnAction
     private fun findScriptName(file: com.intellij.psi.PsiFile): String {
         val module = Regex("""(?m)^\s*module\s+([A-Za-z0-9_.']+)\s+where\b""")
             .find(file.text)?.groupValues?.getOrNull(1)
-        val script = Regex("""(?m)^\s*([a-zA-Z_][\w']*)\s*(?:::[^\n]+)?=\s*script\b""")
+        val script = Regex("""(?m)^\s*([a-zA-Z_][\w']*)\s*(?::[^\n]+)?=\s*script\b""")
             .find(file.text)?.groupValues?.getOrNull(1) ?: return ""
         return if (module.isNullOrBlank()) script else "$module:$script"
     }

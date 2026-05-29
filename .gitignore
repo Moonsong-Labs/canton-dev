@@ -11,6 +11,7 @@
 
 # DAML/Canton generated files
 .daml/
+.canton-sandboxes/
 .build/
 log/
 navigator.log
@@ -23,6 +24,7 @@ build/
 
 # Local development
 examples/
+packages/private-settlement/
 *.log
 .env
 .env.local

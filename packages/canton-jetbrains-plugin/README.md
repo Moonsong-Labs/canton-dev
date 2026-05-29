@@ -1,16 +1,16 @@
 # Canton JetBrains Plugin
 
-DAML language support for JetBrains IDEs (IntelliJ IDEA Community/Ultimate, WebStorm, PyCharm, GoLand, RustRover, ...). Wraps the official DAML language server (`daml damlc ide` / `dpm damlc ide`) via [LSP4IJ](https://github.com/redhat-developer/lsp4ij).
+DAML language support for GoLand 2026.1+. Wraps the official DAML language server (`daml damlc ide` / `dpm damlc ide`) via the IntelliJ Platform native LSP API.
 
 ## Status
 
-v0.1 — local-install beta. Builds a `.zip` artifact suitable for **Settings → Plugins → ⚙ → Install Plugin from Disk…**. No Marketplace publishing yet.
+v0.3 — local-install beta. Builds a `.zip` artifact suitable for **Settings → Plugins → ⚙ → Install Plugin from Disk…**. No Marketplace publishing yet.
 
 ## Super Quick Start
 
 Use this path when you want to test the plugin in your local JetBrains IDE with the local DAML/DPM runtime.
 
-1. Install a JetBrains IDE, such as RustRover or IntelliJ IDEA, and the LSP4IJ plugin.
+1. Install GoLand 2026.1 or newer.
 2. Install `dpm` or the DAML assistant if neither exists yet:
 
    ```bash
@@ -28,7 +28,7 @@ Use this path when you want to test the plugin in your local JetBrains IDE with 
    ./gradlew buildPlugin
    ```
 
-4. Install `build/distributions/canton-jetbrains-plugin-0.1.0.zip` in your IDE:
+4. Install `build/distributions/canton-jetbrains-plugin-0.3.0.zip` in your IDE:
    - Open **Settings / Preferences → Plugins**.
    - Click the gear icon.
    - Choose **Install Plugin from Disk…**.
@@ -47,7 +47,7 @@ Use this path when you want to test the plugin in your local JetBrains IDE with 
 
 Expected success signals:
 
-- LSP4IJ shows the DAML Language Server as running.
+- The IDE LSP widget shows the DAML Language Server as running.
 - `.daml` files show diagnostics and hover tooltips.
 - Clicking a DAML `Script results` code lens, or running **Tools → Show DAML Script Results** from a `.daml` file, opens the **DAML Script Results** tool window.
 - In table view, **Show detailed disclosure** expands party visibility from `X` into `S` signatory, `O` observer, `W` witness, and `D` divulgence markers.
@@ -55,7 +55,7 @@ Expected success signals:
 
 ## Features
 
-- Syntax highlighting for `.daml` files via a native lexer; LSP semantic tokens layer on top once the server responds
+- Syntax highlighting for `.daml` files via a native lexer
 - Diagnostics, hover, go-to-definition, completion, document symbols, rename — all via the official DAML LSP
 - Local fallback navigation for DAML imports, so Ctrl/Cmd-click on `import Some.Module.Name` opens the matching `module`, and explicit import-list symbols like `import Some.Module (Thing)` jump to the local `Thing` declaration when available
 - DAML's signature **Script Results** panel (rendered in a JCEF webview, mirroring the VSCode experience)
@@ -65,14 +65,12 @@ Expected success signals:
 - Live templates (`template`, `choice`, `signatory`, `script`, …)
 - Per-project settings: DAML SDK version installer, runtime validation, DAML/DPM/Canton binary paths, log level, telemetry, extra args, multi-package mode
 - DAML LSP currently uses stable single-package `damlc ide`; root `multi-package.yaml` projects fall back to the active or first nested `daml.yaml` package workspace.
-- The upstream DAML TextMate grammar is bundled at `resources/grammars/daml.tmLanguage.xml` for users who want to register it manually via **Settings → Editor → TextMate Bundles** (not auto-registered)
 
 ## Prerequisites
 
-- A JetBrains IDE on **2025.2** or newer
+- GoLand **2026.1** or newer
 - `dpm` or the DAML assistant installed locally. The plugin can install SDK `3.4.11` from there.
 - Canton installed locally if you want Canton run configurations (`canton --help` should work, or set the Canton binary override)
-- The [LSP4IJ plugin](https://plugins.jetbrains.com/plugin/23257-lsp4ij) installed in your IDE (it is a runtime dependency; the IDE will offer to install it when you load this plugin)
 
 ## Install In A JetBrains IDE
 
@@ -96,7 +94,7 @@ To install a locally built zip:
    packages/canton-jetbrains-plugin/build/distributions/canton-jetbrains-plugin-<version>.zip
    ```
 
-3. In RustRover, IntelliJ IDEA, or another JetBrains IDE, open **Settings / Preferences → Plugins**.
+3. In GoLand, open **Settings / Preferences → Plugins**.
 4. Click the gear icon next to the plugin search field.
 5. Choose **Install Plugin from Disk…**.
 6. Select the generated `canton-jetbrains-plugin-<version>.zip`.
@@ -113,14 +111,14 @@ The Gradle wrapper is committed; you only need a JDK 21 on your PATH. The wrappe
 ```bash
 cd packages/canton-jetbrains-plugin
 
-# Verify your toolchain (JDK 21 required by IntelliJ Platform 2025.2).
+# Verify your toolchain (JDK 21 required by IntelliJ Platform 2026.1).
 java -version            # should report 21.x
 
 # Build the plugin distribution.
 ./gradlew buildPlugin
 # Artifact: build/distributions/canton-jetbrains-plugin-<version>.zip
 
-# Fast iteration: launch a sandbox IntelliJ IDEA Community with the plugin pre-installed.
+# Fast iteration: launch a sandbox GoLand with the plugin pre-installed.
 ./gradlew runIde
 
 # Optional: run the JetBrains plugin verifier before packaging.
@@ -134,7 +132,7 @@ After building, install the generated zip through **Settings / Preferences → P
 ## Verify it's working
 
 - Open a `.daml` file → DAML icon and language tag in the editor tab; keywords highlighted.
-- Status bar: "DAML Language Server: Running" (LSP4IJ surface).
+- Status bar: "DAML Language Server: Running".
 - Introduce a type error → red squiggle within ~2 s.
 - Hover any identifier → inferred type tooltip.
 - `Cmd/Ctrl+Click` an identifier → jumps to definition.
@@ -145,7 +143,6 @@ After building, install the generated zip through **Settings / Preferences → P
 | Symptom | Fix |
 |---|---|
 | Plugin zip not found | Run `./gradlew buildPlugin`; install `build/distributions/canton-jetbrains-plugin-0.1.0.zip`. |
-| LSP4IJ missing | Install the LSP4IJ plugin from JetBrains Marketplace, then restart the IDE. |
 | `Unable to start language server: ProcessStreamConnectionProvider ... ~/.daml/bin/daml ... multi-ide` | Reinstall the latest plugin zip. For host testing, the plugin now prefers the pinned SDK assistant, for example `~/.daml/sdk/3.4.11/daml/daml`, over stale `~/.daml/bin/daml` symlinks. |
 | `Unable to start language server ... damlc multi-ide ...` | Reinstall the latest plugin zip. The beta now avoids `damlc multi-ide` for LSP startup and uses stable `damlc ide` from a nested package workspace. |
 | "DAML SDK not found" | Install `dpm` or the DAML assistant first. Then use **Settings → Languages & Frameworks → DAML → Install selected SDK**, or set the binary path override. |

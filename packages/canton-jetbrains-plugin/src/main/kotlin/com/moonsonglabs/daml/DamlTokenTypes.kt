@@ -78,8 +78,7 @@ object DamlTokenTypes {
 /**
  * The contextual DAML keywords (Haskell shares the rest).
  *
- * Why: ported from upstream daml12.tmLanguage.xml; kept here so the lexer can match without
- * pulling the full TextMate grammar.
+ * Why: kept in the native lexer so first-paint highlighting does not depend on external grammars.
  */
 object DamlKeywords {
     val moduleKeywords = setOf("module", "where")
@@ -151,6 +150,8 @@ object DamlKeywords {
         "date", "datetime", "time", "subTime", "wholeDays",
         "optional", "fromOptional", "fromSome", "fromSomeNote", "isNone", "isSome",
         "createCmd", "createExactCmd", "exerciseCmd", "exerciseExactCmd",
+        "exerciseInterface", "exerciseInterfaceCmd",
+        "exerciseByKeyInterface", "exerciseByKeyInterfaceCmd",
         "exerciseByKeyCmd", "exerciseByKeyExactCmd", "createAndExerciseCmd",
         "createAndExerciseExactCmd", "createAndExerciseWithCidCmd",
         "createAndExerciseWithCidExactCmd", "archiveCmd",

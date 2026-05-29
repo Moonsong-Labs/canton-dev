@@ -4,7 +4,7 @@ fun properties(key: String) = providers.gradleProperty(key)
 
 plugins {
     id("java")
-    id("org.jetbrains.kotlin.jvm") version "2.1.20"
+    id("org.jetbrains.kotlin.jvm") version "2.3.0"
     id("org.jetbrains.intellij.platform") version "2.16.0"
 }
 
@@ -20,20 +20,22 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
 
     intellijPlatform {
-        create(properties("platformType").get(), properties("platformVersion").get())
-
-        plugin("com.redhat.devtools.lsp4ij:${properties("lsp4ijVersion").get()}")
+        val localIdePath = providers.gradleProperty("localIdePath")
+            .orElse(providers.environmentVariable("LOCAL_IDE_PATH"))
+        if (localIdePath.isPresent) {
+            local(localIdePath)
+        } else {
+            create(properties("platformType").get(), properties("platformVersion").get())
+        }
 
         // Bundled plugins we depend on at runtime. If a name fails to resolve in your IDE
         // edition (e.g. JSON plugin id changes), comment the offending line and remove the
         // matching <depends> from plugin.xml.
-        bundledPlugin("org.jetbrains.plugins.textmate")
         bundledPlugin("com.intellij.modules.json")
         bundledPlugin("org.jetbrains.plugins.yaml")
         bundledPlugin("org.jetbrains.plugins.terminal")
 
         pluginVerifier()
-        zipSigner()
         testFramework(TestFrameworkType.Platform)
     }
 }
@@ -48,8 +50,7 @@ intellijPlatform {
         ideaVersion {
             sinceBuild = properties("pluginSinceBuild")
             // untilBuild deliberately omitted: the IntelliJ Platform Gradle Plugin will
-            // auto-detect a sensible upper bound from `platformVersion`. To pin manually,
-            // set `pluginUntilBuild` in gradle.properties (e.g. "252.*").
+            // auto-detect a sensible upper bound from `platformVersion`.
         }
     }
 
@@ -70,5 +71,21 @@ tasks {
     wrapper {
         gradleVersion = "9.2.1"
         distributionType = Wrapper.DistributionType.BIN
+    }
+
+    val intellijTest = named<Test>("test")
+    register<Test>("dockerIntegrationTest") {
+        group = "verification"
+        description = "Runs optional Docker-backed managed Canton sandbox integration checks."
+        testClassesDirs = intellijTest.get().testClassesDirs
+        classpath = intellijTest.get().classpath
+        include("**/SandboxDockerIntegrationTest.class")
+        shouldRunAfter(intellijTest)
+        onlyIf {
+            providers.gradleProperty("runDockerIntegration").orNull == "true" ||
+                System.getenv("RUN_DOCKER_INTEGRATION") == "true"
+        }
+        systemProperty("runDockerIntegration", "true")
+        systemProperty("cantonDockerImage", System.getenv("CANTON_DOCKER_IMAGE") ?: "canton-jetbrains-dev:latest")
     }
 }

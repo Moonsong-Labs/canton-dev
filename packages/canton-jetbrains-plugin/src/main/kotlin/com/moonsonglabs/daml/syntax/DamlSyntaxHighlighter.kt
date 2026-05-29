@@ -73,9 +73,9 @@ class DamlSyntaxHighlighter : SyntaxHighlighterBase() {
         val CONTROL_KEYWORD = TextAttributesKey.createTextAttributesKey(
             "DAML_CONTROL_KEYWORD", DefaultLanguageHighlighterColors.KEYWORD)
         val TYPE_NAME = TextAttributesKey.createTextAttributesKey(
-            "DAML_TYPE_NAME", DefaultLanguageHighlighterColors.CLASS_NAME)
+            "DAML_TYPE_NAME", DefaultLanguageHighlighterColors.FUNCTION_DECLARATION)
         val PRELUDE_TYPE = TextAttributesKey.createTextAttributesKey(
-            "DAML_PRELUDE_TYPE", DefaultLanguageHighlighterColors.CLASS_NAME)
+            "DAML_PRELUDE_TYPE", TYPE_NAME)
         val IDENTIFIER = TextAttributesKey.createTextAttributesKey(
             "DAML_IDENTIFIER", DefaultLanguageHighlighterColors.IDENTIFIER)
         val MODULE_NAME = TextAttributesKey.createTextAttributesKey(
@@ -92,6 +92,8 @@ class DamlSyntaxHighlighter : SyntaxHighlighterBase() {
             "DAML_IMPORT_SYMBOL", DefaultLanguageHighlighterColors.CLASS_REFERENCE)
         val SCRIPT_DECLARATION = TextAttributesKey.createTextAttributesKey(
             "DAML_SCRIPT_DECLARATION", DefaultLanguageHighlighterColors.FUNCTION_DECLARATION)
+        val ABSTRACT_METHOD = TextAttributesKey.createTextAttributesKey(
+            "DAML_ABSTRACT_METHOD", DefaultLanguageHighlighterColors.INSTANCE_METHOD)
         val BUILTIN = TextAttributesKey.createTextAttributesKey(
             "DAML_BUILTIN", DefaultLanguageHighlighterColors.KEYWORD)
         val PARTY_NAME = TextAttributesKey.createTextAttributesKey(
@@ -100,6 +102,8 @@ class DamlSyntaxHighlighter : SyntaxHighlighterBase() {
             "DAML_CONSTRUCTOR", DefaultLanguageHighlighterColors.STATIC_FIELD)
         val PREDEFINED_VALUE = TextAttributesKey.createTextAttributesKey(
             "DAML_PREDEFINED_VALUE", DefaultLanguageHighlighterColors.PREDEFINED_SYMBOL)
+        val THIS_REFERENCE = TextAttributesKey.createTextAttributesKey(
+            "DAML_THIS_REFERENCE", DefaultLanguageHighlighterColors.PREDEFINED_SYMBOL)
         val STRING = TextAttributesKey.createTextAttributesKey(
             "DAML_STRING", DefaultLanguageHighlighterColors.STRING)
         val NUMBER = TextAttributesKey.createTextAttributesKey(

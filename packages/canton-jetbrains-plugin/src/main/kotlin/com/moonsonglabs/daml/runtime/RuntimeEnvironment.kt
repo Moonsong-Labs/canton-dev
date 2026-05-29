@@ -13,11 +13,10 @@ object RuntimeEnvironment {
         localToolEnvironment(null)
 
     fun localToolEnvironment(settings: DamlProjectSettings? = null): Map<String, String> {
-        val javaHome = System.getProperty("java.home")?.takeIf { Files.isDirectory(Path.of(it)) }
-        val javaBin = javaHome?.let { Path.of(it, "bin") }
-        val path = buildPath(localToolDirectories(settings) + javaBin, System.getenv("PATH").orEmpty())
+        val javaHome = ideJavaHome()
+        val path = buildPath(localToolAndJavaDirectories(settings), System.getenv("PATH").orEmpty())
         return buildMap {
-            if (javaHome != null) put("JAVA_HOME", javaHome)
+            if (javaHome != null) put("JAVA_HOME", javaHome.toString())
             put("PATH", path)
         }
     }
@@ -60,6 +59,14 @@ object RuntimeEnvironment {
         }
         return dirs.distinct()
     }
+
+    internal fun localToolAndJavaDirectories(settings: DamlProjectSettings? = null): List<Path> =
+        (localToolDirectories(settings) + ideJavaHome()?.resolve("bin")).filterNotNull().distinct()
+
+    internal fun ideJavaHome(): Path? =
+        System.getProperty("java.home")
+            ?.let { Path.of(it) }
+            ?.takeIf { Files.isDirectory(it) }
 
     internal fun buildPath(prefixDirs: List<Path?>, basePath: String): String =
         (prefixDirs.filterNotNull().map { it.toString() } + basePath.split(File.pathSeparator))

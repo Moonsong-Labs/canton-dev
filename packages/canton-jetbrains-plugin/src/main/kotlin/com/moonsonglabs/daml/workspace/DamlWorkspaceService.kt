@@ -12,7 +12,10 @@ import kotlin.io.path.name
 @Service(Service.Level.PROJECT)
 class DamlWorkspaceService(private val project: Project) {
 
-    fun projectRoot(): Path? = project.basePath?.let(Paths::get)
+    fun projectRoot(): Path? =
+        project.basePath
+            ?.let(Paths::get)
+            ?.takeIf(Files::isDirectory)
 
     fun discoverWorkspaces(): List<Path> {
         val root = projectRoot() ?: return emptyList()
@@ -39,9 +42,10 @@ class DamlWorkspaceService(private val project: Project) {
 
     fun workspaceFor(file: VirtualFile?): Path? {
         val root = projectRoot() ?: return defaultWorkspace()
-        val start = file?.toNioPath()?.let { if (Files.isDirectory(it)) it else it.parent } ?: root
+        val start = file?.let(::toPathOrNull)?.let { if (Files.isDirectory(it)) it else it.parent } ?: root
+        if (start.any { it.name in ignoredPathNames }) return defaultWorkspace()
         var cursor: Path? = start
-        while (cursor != null && cursor.startsWith(root)) {
+        while (cursor != null && cursor.normalize().startsWith(root.normalize())) {
             if (isDamlWorkspace(cursor)) return cursor
             cursor = cursor.parent
         }
@@ -54,9 +58,14 @@ class DamlWorkspaceService(private val project: Project) {
     private fun shouldKeepWorkspace(root: Path, workspace: Path): Boolean {
         val rel = runCatching { root.relativize(workspace).toString() }.getOrDefault("")
         return rel.split(java.io.File.separatorChar).none {
-            it == ".daml" || it == "build" || it == "out" || it == "node_modules" || it == ".gradle"
+            it in ignoredPathNames
         }
     }
+
+    private fun toPathOrNull(file: VirtualFile): Path? =
+        runCatching { file.toNioPath() }.getOrNull()
+
+    private val ignoredPathNames = setOf(".daml", "build", "out", "node_modules", ".gradle")
 
     companion object {
         fun getInstance(project: Project): DamlWorkspaceService = project.service()

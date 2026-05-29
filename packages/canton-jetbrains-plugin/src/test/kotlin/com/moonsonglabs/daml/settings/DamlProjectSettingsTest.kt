@@ -38,4 +38,15 @@ class DamlProjectSettingsTest {
         assertEquals("txTree", settings.selectedView)
         assertEquals("txTree", settings.getState().selectedView)
     }
+
+    @Test
+    fun `loadState forces dpm preference for sdk 3 workflows`() {
+        val settings = DamlProjectSettings()
+
+        settings.loadState(DamlProjectSettings.State(useDPMWhenAvailable = false))
+        settings.useDPMWhenAvailable = false
+
+        assertEquals(true, settings.useDPMWhenAvailable)
+        assertEquals(true, settings.getState().useDPMWhenAvailable)
+    }
 }

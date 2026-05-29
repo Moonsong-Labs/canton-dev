@@ -8,8 +8,9 @@ import com.intellij.openapi.diagnostic.thisLogger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowManager
+import com.intellij.platform.lsp.api.LspServerManager
+import com.moonsonglabs.daml.lsp.DamlLspServerSupportProvider
 import com.moonsonglabs.daml.lsp.DamlServerInterface
-import com.redhat.devtools.lsp4ij.LanguageServerManager
 import org.eclipse.lsp4j.DidCloseTextDocumentParams
 import org.eclipse.lsp4j.DidOpenTextDocumentParams
 import org.eclipse.lsp4j.TextDocumentIdentifier
@@ -38,6 +39,7 @@ class VirtualResourceManager(private val project: Project) : Disposable {
     fun update(uri: String, html: String) {
         resources.computeIfAbsent(uri) { Resource() }.apply {
             this.html = html
+            notes = emptyList()
             progressMs = -1
         }
         applyOnEdt(uri) { panel ->
@@ -82,6 +84,9 @@ class VirtualResourceManager(private val project: Project) : Disposable {
                 if (it.html.isNotEmpty()) panel.setHtml(it.html)
                 it.notes.forEach(panel::setNote)
                 panel.setProgress(it.progressMs)
+            } ?: run {
+                panel.clearResource()
+                panel.setProgress(-1)
             }
         }
     }
@@ -119,25 +124,30 @@ class VirtualResourceManager(private val project: Project) : Disposable {
         block: (DamlServerInterface) -> Unit
     ) {
         if (project.isDisposed) return
-        LanguageServerManager.getInstance(project)
-            .getLanguageServer("daml")
-            .thenAccept { item ->
-                if (project.isDisposed) return@thenAccept
-                val server = item?.server as? DamlServerInterface ?: return@thenAccept
-                try {
-                    block(server)
-                } catch (t: Throwable) {
-                    thisLogger().warn("Failed to $operation DAML virtual resource $uri", t)
+        val servers = LspServerManager.getInstance(project)
+            .getServersForProvider(DamlLspServerSupportProvider::class.java)
+        if (servers.isEmpty()) {
+            thisLogger().warn("No DAML language server available to $operation virtual resource $uri")
+            return
+        }
+
+        servers.forEach { server ->
+            server.sendNotification { lsp ->
+                if (!project.isDisposed) {
+                    try {
+                        block(lsp as DamlServerInterface)
+                    } catch (t: Throwable) {
+                        thisLogger().warn("Failed to $operation DAML virtual resource $uri", t)
+                    }
                 }
+                Unit
             }
-            .exceptionally { t ->
-                thisLogger().warn("Failed to resolve DAML language server to $operation virtual resource $uri", t)
-                null
-            }
+        }
     }
 
     private fun applyOnEdt(uri: String, block: (ScriptResultsPanel) -> Unit) {
         ApplicationManager.getApplication().invokeLater {
+            if (activeUri != uri) return@invokeLater
             val tw = toolWindow() ?: return@invokeLater
             if (!tw.isVisible) tw.show()
             val panel = panelOf(tw) ?: return@invokeLater

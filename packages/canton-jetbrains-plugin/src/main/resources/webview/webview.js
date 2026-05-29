@@ -228,15 +228,13 @@ function parseContracts(root) {
   for (const heading of headings) {
     const table = nextTableAfter(heading);
     if (!table || table.closest('.transaction')) continue;
-    const contract = contractFromHeadingAndTable(heading, table, contracts.length + 1);
-    if (contract) contracts.push(contract);
+    contracts.push(...contractsFromHeadingAndTable(heading, table, contracts.length + 1));
   }
 
   if (contracts.length === 0) {
     for (const table of Array.from(root.querySelectorAll('.table table, table'))) {
       if (table.closest('.transaction')) continue;
-      const contract = contractFromHeadingAndTable(null, table, contracts.length + 1);
-      if (contract) contracts.push(contract);
+      contracts.push(...contractsFromHeadingAndTable(null, table, contracts.length + 1));
     }
   }
   return contracts;
@@ -254,14 +252,19 @@ function nextTableAfter(element) {
   return null;
 }
 
-function contractFromHeadingAndTable(heading, table, index) {
-  const headerText = heading ? cleanText(heading.textContent) : 'Contract ' + index;
+function contractsFromHeadingAndTable(heading, table, startIndex) {
+  const headerText = heading ? cleanText(heading.textContent) : 'Contract ' + startIndex;
   const rows = Array.from(table.querySelectorAll('tr'));
-  if (rows.length === 0) return null;
+  if (rows.length === 0) return [];
   const headerCells = Array.from(rows[0].querySelectorAll('th,td'));
   const headers = headerCells.map(cell => cleanText(cell.textContent));
-  const dataRow = rows.slice(1).find(row => row.querySelectorAll('td,th').length > 0);
-  if (!dataRow) return null;
+  const dataRows = rows.slice(1).filter(row => row.querySelectorAll('td,th').length > 0);
+  return dataRows.map((dataRow, offset) =>
+    contractFromHeadingTableRow(heading, table, headerText, headerCells, headers, dataRow, startIndex + offset)
+  ).filter(Boolean);
+}
+
+function contractFromHeadingTableRow(heading, table, headerText, headerCells, headers, dataRow, index) {
   const cells = Array.from(dataRow.querySelectorAll('td,th'));
   const values = cells.map(cell => cleanText(cell.textContent));
   const idIndex = headerIndex(headers, 'id');
@@ -295,7 +298,7 @@ function contractFromHeadingAndTable(heading, table, index) {
     }
   });
 
-  const parties = partiesForContract(fields, disclosures);
+  const parties = partiesForContract(disclosures);
   return {
     id,
     displayId: shortId(id),
@@ -323,16 +326,21 @@ function parseTemplateTitle(text) {
   return { template, shortName, packageId };
 }
 
-function partiesForContract(fields, disclosures) {
+function partiesForContract(disclosures) {
   const names = new Map();
   for (const disclosure of disclosures) {
+    if (!disclosure.visible) continue;
     addParty(names, disclosure.party, roleList(disclosure.detail));
   }
-  for (const field of fields) {
-    const party = partyValueFromField(field.name, field.value);
-    if (party) addParty(names, party, [field.name]);
-  }
   return Array.from(names.values());
+}
+
+function disclosurePartiesForContracts(contracts) {
+  return Array.from(new Set((contracts || []).flatMap(contract =>
+    (contract.disclosures || [])
+      .map(disclosure => cleanPartyValue(disclosure.party))
+      .filter(party => party && looksLikePartyValue(party))
+  ))).sort();
 }
 
 function addParty(map, name, roles) {
@@ -409,13 +417,16 @@ function transactionMapFromContracts(contracts) {
 }
 
 function transactionEventFromContract(contract) {
+  const kind = contract.archived ? 'Archived/Result' : 'Create';
+  const parties = contract.parties || [];
   return {
     id: 'contract-' + contract.id,
-    kind: contract.archived ? 'Archived/Result' : 'Create',
+    kind,
     label: contract.templateShort,
     contractId: contract.id,
     template: contract.template,
-    parties: contract.parties,
+    actors: primaryActorsForKind(kind, parties, []),
+    parties,
     fields: contract.fields,
     source: 'contract'
   };
@@ -846,7 +857,7 @@ function renderRunSummary(contracts, transactions) {
 }
 
 function renderPartyOverview(contracts, parties) {
-  if (!parties.length) return emptyState('No parties inferred.');
+  if (!parties.length) return emptyState('No DPM disclosure parties.');
   return el('div', { className: 'party-role-list compact' }, parties.map(name => {
     const roles = rolesForPartyAcrossContracts(contracts, name);
     return el('div', { className: 'party-role-row' }, [
@@ -860,7 +871,7 @@ function renderPartyOverview(contracts, parties) {
 }
 
 function renderTxPreview(transactions) {
-  if (!transactions.length) return emptyState('No transaction tree inferred. Open Raw for the original result.');
+  if (!transactions.length) return emptyState('No transaction tree found in DPM output. Open Raw for the original result.');
   return el('div', { className: 'tx-preview-list' }, transactions.slice(0, 5).map(tx =>
     el('button', {
       className: 'tx-preview-row',
@@ -1024,7 +1035,7 @@ function eventNode(event, index) {
 
 function eventNodeAt(event, indexLabel) {
   const children = event.children || [];
-  return el('details', { className: 'tx-node', open: true }, [
+  return el('details', { className: 'tx-node tx-node-' + eventKindCss(event.kind), open: true }, [
     el('summary', {}, [
       el('button', {
         className: 'tx-toggle',
@@ -1034,16 +1045,18 @@ function eventNodeAt(event, indexLabel) {
       }),
       el('span', { className: 'tx-step' }, indexLabel),
       eventBadge(event.kind),
-      eventHeadline(event),
+      el('span', { className: 'tx-event-main' }, [
+        eventHeadline(event),
+        eventSummaryRoles(event)
+      ]),
       event.contractId ? el('button', {
         className: 'link-button mono',
         type: 'button',
-        onclick: ev => { ev.preventDefault(); state.selectedContractId = event.contractId; selectView('contracts'); }
+        onclick: ev => { ev.preventDefault(); ev.stopPropagation(); state.selectedContractId = event.contractId; selectView('contracts'); }
       }, shortId(event.contractId)) : null
     ]),
     el('div', { className: 'tx-node-body' }, [
-      event.template ? el('div', { className: 'muted' }, event.template) : null,
-      event.parties && event.parties.length ? el('div', { className: 'chip-row' }, event.parties.map(party => partyChip(party))) : null,
+      eventDetailSummary(event),
       event.fields && event.fields.length ? compactFieldGrid(event.fields.slice(0, 6)) : null,
       event.rawText && !event.fields.length ? el('div', { className: 'mono muted wrap' }, event.rawText) : null,
       children.length ? el('div', { className: 'tx-children' }, children.map((child, index) => eventNodeAt(child, indexLabel + '.' + (index + 1)))) : null
@@ -1060,7 +1073,7 @@ function toggleEventNode(event) {
 
 function eventHeadline(event) {
   const kind = String(event.kind || 'Event');
-  const actors = (event.actors && event.actors.length ? event.actors : []).map(party => party.name || party).filter(Boolean);
+  const actors = eventPrimaryActors(event).map(party => party.name || party).filter(Boolean);
   const parts = [];
   if (actors.length) {
     actors.slice(0, 2).forEach((party, index) => {
@@ -1086,6 +1099,109 @@ function eventHeadline(event) {
   }
 
   return el('span', { className: 'tx-event-title' }, parts.length ? parts : [document.createTextNode(event.label || kind)]);
+}
+
+function eventSummaryRoles(event) {
+  const groups = [];
+  const kind = String(event.kind || '');
+  if (kind === 'Create') {
+    groups.push(eventRoleGroup('signatory', partiesWithRole(event.parties, 'signatory')));
+    groups.push(eventRoleGroup('observer', partiesWithRole(event.parties, 'observer')));
+  } else if (kind === 'Exercise') {
+    const controllers = normalizePartyObjects(event.actors, 'controller')
+      .concat(partiesWithRole(event.parties, 'controller'));
+    groups.push(eventRoleGroup('controller', uniqueParties(controllers)));
+  } else {
+    groups.push(eventRoleGroup('witness', partiesWithRole(event.parties, 'witness')));
+  }
+  const visibleGroups = groups.filter(Boolean);
+  if (!visibleGroups.length) return null;
+  return el('span', { className: 'tx-event-meta' }, visibleGroups);
+}
+
+function eventRoleGroup(role, parties) {
+  const unique = uniqueParties(parties || []);
+  if (!unique.length) return null;
+  const shown = unique.slice(0, 3);
+  return el('span', { className: 'tx-role-group tx-role-group-' + roleCssClass(role) }, [
+    el('span', { className: 'tx-role-label ' + roleCssClass(role) }, role),
+    shown.map(party => partyChip(Object.assign({}, party, { roles: [role] }), null, false)),
+    unique.length > shown.length ? el('span', { className: 'tx-muted-token' }, '+' + (unique.length - shown.length)) : null
+  ]);
+}
+
+function eventDetailSummary(event) {
+  const rows = [];
+  addDetailRow(rows, 'Template', event.template ? txWord(event.template, 'tx-template') : null);
+  if (event.kind === 'Exercise' && event.label) addDetailRow(rows, 'Choice', txWord(event.label, 'tx-choice'));
+  addDetailRow(rows, 'Contract', event.contractId ? txWord(event.contractId, 'mono') : null);
+  addPartyDetailRow(rows, 'Signatories', partiesWithRole(event.parties, 'signatory'));
+  addPartyDetailRow(rows, 'Observers', partiesWithRole(event.parties, 'observer'));
+  if (event.kind === 'Exercise') {
+    addPartyDetailRow(rows, 'Controllers', uniqueParties(normalizePartyObjects(event.actors, 'controller').concat(partiesWithRole(event.parties, 'controller'))));
+  }
+  if (!rows.length) return null;
+  return el('dl', { className: 'tx-detail-summary' }, rows.flatMap(row => [
+    el('dt', {}, row.label),
+    el('dd', {}, row.value)
+  ]));
+}
+
+function addDetailRow(rows, label, value) {
+  if (!value) return;
+  rows.push({ label, value });
+}
+
+function addPartyDetailRow(rows, label, parties) {
+  const unique = uniqueParties(parties || []);
+  if (!unique.length) return;
+  rows.push({
+    label,
+    value: el('span', { className: 'chip-row compact' }, unique.map(party => partyChip(party)))
+  });
+}
+
+function eventPrimaryActors(event) {
+  return primaryActorsForKind(event && event.kind, event && event.parties, event && event.actors);
+}
+
+function primaryActorsForKind(kind, parties, fallbackActors) {
+  const fallback = normalizePartyObjects(fallbackActors, 'controller');
+  const kindText = String(kind || '');
+  if (kindText === 'Create') {
+    const signatories = partiesWithRole(parties, 'signatory');
+    return signatories.length ? signatories : fallback;
+  }
+  if (kindText === 'Exercise') {
+    const controllers = fallback.concat(partiesWithRole(parties, 'controller'));
+    return uniqueParties(controllers);
+  }
+  return fallback.length ? fallback : partiesWithRole(parties, 'signatory');
+}
+
+function partiesWithRole(parties, role) {
+  const wanted = cleanRole(role);
+  return uniqueParties((parties || []).filter(party => partyRoleLabels(party && party.roles).includes(wanted)));
+}
+
+function normalizePartyObjects(parties, role) {
+  return (parties || [])
+    .map(party => typeof party === 'string' ? { name: cleanPartyValue(party), roles: role ? [role] : [] } : party)
+    .filter(party => party && party.name && looksLikePartyValue(party.name));
+}
+
+function uniqueParties(parties) {
+  const map = new Map();
+  for (const party of normalizePartyObjects(parties)) {
+    const name = cleanPartyValue(party.name);
+    if (!name) continue;
+    const existing = map.get(name) || { name, roles: [] };
+    for (const role of partyRoleLabels(party.roles)) {
+      if (!existing.roles.includes(role)) existing.roles.push(role);
+    }
+    map.set(name, existing);
+  }
+  return Array.from(map.values());
 }
 
 function txParty(name) {
@@ -1119,8 +1235,8 @@ function templateShortName(value) {
 
 function renderDisclosureView() {
   const contracts = filteredContracts();
-  const parties = state.model.parties;
-  if (contracts.length === 0 || parties.length === 0) return emptyDetail('No disclosure data could be inferred. Open Raw for the original result.');
+  const parties = disclosurePartiesForContracts(contracts);
+  if (contracts.length === 0 || parties.length === 0) return emptyDetail('No DPM disclosure table data was found. Open Raw for the original result.');
   const divulged = parties.filter(party => contracts.some(contract => disclosureState(contract, party).kind === 'divulged'));
   return el('section', { className: 'disclosure-view' }, [
     el('div', { className: 'pane-title' }, [
@@ -1237,7 +1353,7 @@ function detailRows(rows) {
 }
 
 function fieldTable(fields) {
-  if (!fields || !fields.length) return emptyState('No fields inferred.');
+  if (!fields || !fields.length) return emptyState('No fields found in DPM output.');
   return el('table', { className: 'field-table' }, [
     el('tbody', {}, fields.map(field => el('tr', {}, [
       el('th', {}, field.name),
@@ -1250,7 +1366,7 @@ function fieldTable(fields) {
 }
 
 function compactFieldGrid(fields) {
-  if (!fields || !fields.length) return emptyState('No fields inferred.');
+  if (!fields || !fields.length) return emptyState('No fields found in DPM output.');
   return el('dl', { className: 'compact-field-grid' }, fields.flatMap(field => [
     el('dt', {}, field.name),
     el('dd', { className: 'mono wrap' }, shortValue(field.value))
@@ -1275,7 +1391,7 @@ function referenceValue(value) {
 }
 
 function disclosureMini(contract) {
-  if (!contract.disclosures.length) return emptyState('No disclosure columns inferred.');
+  if (!contract.disclosures.length) return emptyState('No disclosure columns found in DPM output.');
   return el('div', { className: 'chip-row' }, contract.disclosures.map(disclosure =>
     el('span', { className: 'role-chip' + (disclosure.visible ? ' visible' : '') }, [
       partyChip({ name: disclosure.party, roles: roleList(disclosure.detail) }),
@@ -1453,7 +1569,7 @@ function eventBadge(kind) {
 }
 
 function partyRoleList(parties) {
-  if (!parties || !parties.length) return emptyState('No parties inferred.');
+  if (!parties || !parties.length) return emptyState('No DPM disclosure parties.');
   return el('div', { className: 'party-role-list' }, parties.map(party => {
     const labels = partyRoleLabels(party.roles);
     return el('div', { className: 'party-role-row' }, [
@@ -1469,9 +1585,7 @@ function partyRoleList(parties) {
 function rolesForPartyAcrossContracts(contracts, partyName) {
   const roles = [];
   for (const contract of contracts) {
-    const party = contract.parties.find(item => item.name === partyName);
-    if (party) roles.push(...party.roles);
-    const disclosure = contract.disclosures.find(item => item.party === partyName);
+    const disclosure = contract.disclosures.find(item => cleanPartyValue(item.party) === partyName);
     if (disclosure && disclosure.visible) roles.push(...roleList(disclosure.detail || 'visible'));
   }
   return Array.from(new Set(roles));
@@ -1694,28 +1808,20 @@ function isDisclosureHeader(header, headerCell) {
     Boolean(headerCell && (
       headerCell.classList.contains('observer') ||
       headerCell.querySelector('.observer,.tooltip,.tooltiptext')
-    ) || looksLikeDisclosurePartyHeader(header));
+    ));
 }
 
 function isDisclosureVisible(cell, value) {
   if (!cell) return false;
   const text = String(value || '').trim().toLowerCase();
-  return cell.classList.contains('disclosed') || text === 'x' || text === 'visible' || text.includes('observer') || text.includes('signatory');
-}
-
-function partyValueFromField(name, value) {
-  if (!isPartyFieldName(name)) return '';
-  const party = cleanPartyValue(value);
-  return looksLikePartyValue(party) ? party : '';
-}
-
-function isPartyFieldName(name) {
-  const lowerName = String(name || '').toLowerCase();
-  return lowerName.includes('party') ||
-    lowerName === 'operator' ||
-    lowerName === 'depositor' ||
-    lowerName === 'public' ||
-    lowerName === 'vaultissuer';
+  return cell.classList.contains('disclosed') ||
+    text === 'x' ||
+    text === 'visible' ||
+    text.includes('observer') ||
+    text.includes('signatory') ||
+    text.includes('witness') ||
+    text.includes('disclosed') ||
+    text.includes('divulged');
 }
 
 function cleanPartyValue(value) {
@@ -1730,11 +1836,6 @@ function looksLikePartyValue(value) {
   if (/^".*"$/.test(text)) return false;
   if (/^-?\d+(\.\d+)?$/.test(text)) return false;
   return /^[A-Za-z][A-Za-z0-9_.:-]*$/.test(text);
-}
-
-function looksLikeDisclosurePartyHeader(value) {
-  const text = cleanPartyValue(value);
-  return looksLikePartyValue(text) && (text.includes('-') || text.includes('::'));
 }
 
 function roleList(text) {
@@ -1757,15 +1858,12 @@ function partyRoleLabels(roles) {
   for (const role of normalized) {
     if (role === 'signatory' || role === 'observer') {
       pushUnique(labels, role);
-      pushUnique(labels, 'stakeholder');
     } else if (role === 'visible') {
       pushUnique(labels, 'disclosed');
     } else if (role === 'witness') {
       pushUnique(labels, 'witness');
     } else if (role === 'controller') {
       pushUnique(labels, 'controller');
-    } else if (isPartyFieldName(role)) {
-      pushUnique(labels, 'field:' + role);
     } else {
       pushUnique(labels, role);
     }
@@ -1787,51 +1885,50 @@ function roleCssClass(role) {
 
 function roleDescription(role) {
   switch (role) {
-    case 'stakeholder': return 'Stakeholder, derived from signatory or observer';
     case 'signatory': return 'Signatory on the contract';
     case 'observer': return 'Observer on the contract';
     case 'controller': return 'Controller of a visible action or choice';
     case 'witness': return 'Witness or disclosed visibility in the transaction';
     case 'disclosed': return 'Visible in the disclosure table';
-    default:
-      if (String(role).startsWith('field:')) return 'Referenced by contract field ' + String(role).substring('field:'.length);
-      return role;
+    default: return role;
   }
 }
 
 function roleSummary(labels) {
-  if (labels.includes('stakeholder')) return 'Stakeholder on this contract.';
+  if (labels.includes('signatory')) return 'DPM reports this party as a signatory.';
+  if (labels.includes('observer')) return 'DPM reports this party as an observer.';
   if (labels.includes('controller')) return 'Can act as a controller for a visible action.';
-  if (labels.includes('witness') || labels.includes('disclosed')) return 'Visible through disclosure, not necessarily a stakeholder.';
-  if (labels.some(label => label.startsWith('field:'))) return 'Referenced by a Party-valued contract field.';
-  return 'Role inferred from script-result disclosure.';
+  if (labels.includes('witness') || labels.includes('disclosed')) return 'Visible in DPM output without signatory or observer role.';
+  return 'Role extracted from DPM disclosure output.';
 }
 
 function disclosureState(contract, party) {
-  const disclosure = contract.disclosures.find(d => d.party === party);
-  const partyMatch = contract.parties.find(p => p.name === party);
-  const roles = partyMatch ? partyMatch.roles.slice() : [];
-  if (disclosure && disclosure.visible) roles.push(...roleList(disclosure.detail || 'visible'));
+  const disclosure = contract.disclosures.find(d => cleanPartyValue(d.party) === party);
+  const roles = disclosure && disclosure.visible ? roleList(disclosure.detail || 'visible') : [];
   return classifyDisclosureState(roles, Boolean(disclosure && disclosure.visible));
 }
 
 function classifyDisclosureState(roles, disclosureVisible) {
   const labels = partyRoleLabels(roles);
-  const stakeholder = labels.includes('stakeholder');
-  const field = labels.find(label => label.startsWith('field:'));
-  if (disclosureVisible && !stakeholder) {
-    return { kind: 'divulged', label: 'divulged', title: 'Some transaction data was disclosed to this non-stakeholder party.' };
+  if (labels.includes('signatory')) {
+    return { kind: 'signatory', label: 'signatory', title: 'DPM reports this party as a signatory on this contract.' };
   }
-  if (stakeholder) {
-    return { kind: 'stakeholder', label: 'stakeholder', title: 'Party is a stakeholder on this contract.' };
+  if (labels.includes('observer')) {
+    return { kind: 'observer', label: 'observer', title: 'DPM reports this party as an observer on this contract.' };
+  }
+  if (labels.includes('divulged')) {
+    return { kind: 'divulged', label: 'divulged', title: 'DPM reports this contract as divulged to this party.' };
   }
   if (labels.includes('controller')) {
     return { kind: 'controller', label: 'controller', title: 'Party can act as a controller for a visible action.' };
   }
-  if (field) {
-    return { kind: 'field', label: field, title: roleDescription(field) };
+  if (labels.includes('witness')) {
+    return { kind: 'witness', label: 'witness', title: 'DPM reports this party as a witness for this contract.' };
   }
-  return { kind: 'hidden', label: '-', title: 'No inferred visibility.' };
+  if (labels.includes('disclosed') || disclosureVisible) {
+    return { kind: 'disclosed', label: 'disclosed', title: 'DPM reports this party can see this contract, without marking it as divulgence.' };
+  }
+  return { kind: 'hidden', label: '-', title: 'No visibility reported by DPM.' };
 }
 
 function classifySeverity(text) {
@@ -1990,15 +2087,20 @@ if (typeof module !== 'undefined') {
     roleList,
     formatDuration,
     isDisclosureHeader,
-    partyValueFromField,
+    contractsFromHeadingAndTable,
+    partiesForContract,
+    disclosurePartiesForContracts,
     looksLikePartyValue,
     partyRoleLabels,
     roleDescription,
     classifyDisclosureState,
     synthesizeTransactionsFromContracts,
+    transactionEventFromContract,
     transactionEventsFromText,
     damlTransactionsFromText,
     inferTransactionEvent,
+    partiesWithRole,
+    eventPrimaryActors,
     mergeTransactionGroups,
     flattenEvents,
     consoleLinesFromTransactionTraceText,

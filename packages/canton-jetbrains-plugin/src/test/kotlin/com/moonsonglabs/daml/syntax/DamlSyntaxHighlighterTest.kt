@@ -32,11 +32,11 @@ class DamlSyntaxHighlighterTest {
     @Test
     fun `uses visible defaults for types constructors builtins and party names`() {
         assertSame(
-            com.intellij.openapi.editor.DefaultLanguageHighlighterColors.CLASS_NAME,
+            com.intellij.openapi.editor.DefaultLanguageHighlighterColors.FUNCTION_DECLARATION,
             DamlSyntaxHighlighter.TYPE_NAME.fallbackAttributeKey
         )
         assertSame(
-            com.intellij.openapi.editor.DefaultLanguageHighlighterColors.CLASS_NAME,
+            DamlSyntaxHighlighter.TYPE_NAME,
             DamlSyntaxHighlighter.PRELUDE_TYPE.fallbackAttributeKey
         )
         assertSame(

@@ -19,18 +19,6 @@
         </context>
     </template>
 
-    <template name="controller" value="controller $PARTY$ can&#10;  $NAME$ : $RET$&#10;    with $FIELD$ : $TYPE$&#10;    do&#10;      $END$"
-              description="DAML legacy controller-can block" toReformat="false" toShortenFQNames="false">
-        <variable name="PARTY" expression="" defaultValue="&quot;party&quot;" alwaysStopAt="true"/>
-        <variable name="NAME" expression="" defaultValue="&quot;Call&quot;" alwaysStopAt="true"/>
-        <variable name="RET" expression="" defaultValue="&quot;ContractId Self&quot;" alwaysStopAt="true"/>
-        <variable name="FIELD" expression="" defaultValue="&quot;name&quot;" alwaysStopAt="true"/>
-        <variable name="TYPE" expression="" defaultValue="&quot;Type&quot;" alwaysStopAt="true"/>
-        <context>
-            <option name="DAML" value="true"/>
-        </context>
-    </template>
-
     <template name="signatory" value="signatory $PARTY$&#10;$END$"
               description="DAML signatory clause" toReformat="false" toShortenFQNames="false">
         <variable name="PARTY" expression="" defaultValue="&quot;owner&quot;" alwaysStopAt="true"/>

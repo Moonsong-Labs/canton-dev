@@ -36,6 +36,7 @@ class DamlProjectSettings : PersistentStateComponent<DamlProjectSettings.State> 
     override fun getState(): State = state
     override fun loadState(state: State) {
         state.selectedView = normalizeScriptResultsView(state.selectedView)
+        state.useDPMWhenAvailable = true
         this.state = state
     }
 
@@ -46,8 +47,8 @@ class DamlProjectSettings : PersistentStateComponent<DamlProjectSettings.State> 
         get() = state.selectedSdkVersion
         set(value) { state.selectedSdkVersion = value.ifBlank { "3.4.11" } }
     var useDPMWhenAvailable: Boolean
-        get() = state.useDPMWhenAvailable
-        set(value) { state.useDPMWhenAvailable = value }
+        get() = true
+        set(value) { state.useDPMWhenAvailable = true }
     var logLevel: String
         get() = state.logLevel
         set(value) { state.logLevel = value }
