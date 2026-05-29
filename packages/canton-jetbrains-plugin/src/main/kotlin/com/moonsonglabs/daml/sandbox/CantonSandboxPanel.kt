@@ -328,7 +328,11 @@ class CantonSandboxPanel(private val project: Project) : JPanel(BorderLayout()),
     }
 
     private fun logsTab(): JComponent =
-        networkPanel(BorderLayout()).apply {
+        networkPanel(BorderLayout(8, 8)).apply {
+            add(networkCard(row(
+                networkLabel("Runtime log"),
+                button("Clear", AllIcons.Actions.GC) { sessions.clearLog() }
+            )), BorderLayout.NORTH)
             add(networkCard(themedScrollPane(logArea)), BorderLayout.CENTER)
         }
 

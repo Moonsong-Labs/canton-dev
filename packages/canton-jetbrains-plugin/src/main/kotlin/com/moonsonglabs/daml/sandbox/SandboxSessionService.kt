@@ -113,6 +113,11 @@ class SandboxSessionService(private val project: Project) : Disposable {
         }
     }
 
+    fun clearLog() {
+        state = state.copy(log = "")
+        notifyListeners()
+    }
+
     fun runJsonRequest(endpoint: Endpoint, method: String, path: String, token: String?, body: String?): SandboxHttpResponse =
         JsonApiClient().request(method, endpoint.url, path, token, body)
 

@@ -4,6 +4,7 @@ import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import com.intellij.ui.components.JBTextField
 import com.intellij.ui.table.JBTable
 import java.awt.Container
+import javax.swing.JButton
 import javax.swing.JLabel
 import javax.swing.JTabbedPane
 
@@ -121,6 +122,23 @@ class CantonSandboxPanelTest : BasePlatformTestCase() {
         }
     }
 
+    fun `test logs tab clear button clears session log`() {
+        val service = SandboxSessionService.getInstance(project)
+        service.privateSetField("state", SandboxSessionState(log = "line one\nline two"))
+        val panel = CantonSandboxPanel(project)
+
+        try {
+            val clearButton = panel.findButton("Clear")
+            assertNotNull(clearButton)
+
+            clearButton!!.doClick()
+
+            assertEquals("", service.snapshot().log)
+        } finally {
+            panel.dispose()
+        }
+    }
+
     fun `test panel reloads when profile service publishes updated profile`() {
         val root = java.nio.file.Path.of(project.basePath!!)
         val service = SandboxProfileService.getInstance(project)
@@ -184,6 +202,12 @@ class CantonSandboxPanelTest : BasePlatformTestCase() {
         return field.get(this) as T
     }
 
+    private fun Any.privateSetField(name: String, value: Any?) {
+        val field = javaClass.getDeclaredField(name)
+        field.isAccessible = true
+        field.set(this, value)
+    }
+
     private fun Any.privateMethod(name: String, vararg parameterTypes: Class<*>): java.lang.reflect.Method {
         val method = javaClass.getDeclaredMethod(name, *parameterTypes)
         method.isAccessible = true
@@ -197,6 +221,11 @@ class CantonSandboxPanelTest : BasePlatformTestCase() {
             }
         }
         return components.filterIsInstance<Container>().any { it.containsTab(title) }
+    }
+
+    private fun Container.findButton(text: String): JButton? {
+        components.filterIsInstance<JButton>().firstOrNull { it.text == text }?.let { return it }
+        return components.filterIsInstance<Container>().firstNotNullOfOrNull { it.findButton(text) }
     }
 
     private fun JBTable.renderedLabel(row: Int, column: Int): JLabel {
