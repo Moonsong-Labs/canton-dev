@@ -8,8 +8,7 @@
   },
   "files": [
     "bin/",
-    "templates/",
-    "README.md"
+    "templates/"
   ],
   "repository": {
     "type": "git",
