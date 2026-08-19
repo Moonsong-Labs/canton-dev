@@ -2,16 +2,58 @@
 
 Tooling that removes the setup tax from Canton and DAML development.
 
-This repository ships **`canton-devenv-start`**, a zero dependency Node CLI that scaffolds a ready to
-use Canton + DAML workspace: a reproducible devcontainer with the DAML SDK and Canton runtime already
-installed, plus a set of Claude Code skills that turn DAML contracts into a typed TypeScript SDK,
-integration tests, a React webapp, and workflow diagrams.
+Digital Asset gives you the DAML SDK, the Canton runtime, and DAML Finance. What they do not give you
+is a one command way to get all of it running in a pinned container inside *your* project, or anything
+that turns your contracts into application code. That is what this repo adds.
 
-One command, and you go from an empty folder to writing DAML instead of installing toolchains.
+It ships **`canton-devenv-start`**, a zero dependency Node CLI that scaffolds a ready to use workspace:
+a reproducible devcontainer with the DAML toolchain already installed, plus five Claude Code skills
+that take you from DAML contracts to a typed TypeScript SDK, integration tests, a React webapp, and
+workflow diagrams.
 
 ```bash
 npx git+ssh://git@github.com/Moonsong-Labs/canton-dev.git#v1.0.0
 ```
+
+---
+
+## ✨ What is ours
+
+Plenty of this stack comes from upstream, so it is worth being precise about the split.
+
+| Layer | Where it comes from |
+|-------|---------------------|
+| DAML SDK, `daml build`, `daml codegen js` | ⬇️ Digital Asset (`digital-asset/daml` releases) |
+| DAML Finance library | ⬇️ Digital Asset (built from source at a pinned commit) |
+| `dpm` CLI, bundled DAML VS Code extension | ⬇️ Digital Asset (OCI registry / inside the SDK) |
+| The five Claude Code skills | ⭐ **Built here** |
+| The devcontainer variants and the scaffolder CLI | ⭐ **Built here** |
+| Editor and language server glue | ⭐ **Built here** |
+| DAML Finance pre built for SDK 3.x | ⭐ **Built here** |
+| CI that reads its own build config | ⭐ **Built here** |
+
+In more detail, the parts that exist nowhere else:
+
+- 🤖 **The five skills.** Nothing upstream flattens `codegen js` output into an ergonomic API, generates
+  tests from your DAML scripts, generates a fully wired webapp, encodes DAML to PlantUML diagram
+  conventions, or formalizes the on ledger versus off ledger decision. This is the bulk of the
+  original work and it is detailed below.
+- 🐳 **A devcontainer path at all.** DA's official [`cn-quickstart`](https://github.com/digital-asset/cn-quickstart)
+  is a Nix and direnv reference *application* you clone and then strip down to your needs, with a
+  Gradle backend, Docker Compose topology, and observability stack attached. This repo takes the
+  opposite approach: a scaffolder that drops a pinned Docker environment into a project you already
+  have. Nothing to clone, nothing to delete.
+- 📌 **A real gap on SDK 3.x.** DA's official `@daml/react`, `@daml/ledger`, and `@daml/types` npm
+  packages are published for the 2.x line only (latest is 2.10.6). If you are on SDK 3.x there is no
+  official React binding to reach for at all, which is exactly what the generated SDK provides.
+- 💰 **DAML Finance pre built for 3.x.** The `latest` image builds it through `dpm` from a pinned commit
+  on the 3.x upgrade branch, so the DARs are ready at first boot instead of being a manual step every
+  developer repeats.
+- 🔌 **`install-daml-vsix.sh`.** Locates the bundled extension across dpm cache and SDK layouts, then
+  finds whichever remote CLI is actually present (VS Code, VS Code Insiders, Cursor, or the raw remote
+  CLI) and installs it. This is the kind of glue that quietly eats an afternoon per developer.
+- ⚙️ **CI that reads its own config.** `test-devcontainers.yml` pulls `DAML_SDK_VERSION`, `dockerfile`,
+  and `context` straight out of each `devcontainer.json`, so bumping the SDK needs no workflow edit.
 
 ---
 
@@ -97,42 +139,12 @@ Two environment variants are maintained side by side, both verified in CI:
 | Variant | DAML SDK | Extras |
 |---------|----------|--------|
 | 🟢 `stable` | 2.10.2 | Shared base image: JDK 17, Node 22, Bun, TypeScript, Vitest |
-| 🔵 `latest` | 3.4.9 | Adds the `dpm` CLI, `oras`, `yq`, and a pre built DAML Finance at a pinned commit, so the DARs are ready on first boot |
+| 🔵 `latest` | 3.4.9 | Adds the `dpm` CLI, `oras`, `yq`, and a pre built DAML Finance at a pinned commit |
 
 Both forward the Canton ledger, admin, and JSON API ports (`5011`, `5012`, `5018`, `5019`, `5021`,
 `5022`, `7500`, `7575`), auto install the bundled DAML VS Code extension on attach, and run as a non
 root `daml` user. The SDK version is a required build arg, so the image fails loudly rather than
 silently drifting.
-
----
-
-## ✨ What is original here
-
-Plenty of this stack comes from upstream, and it is worth being precise about the split.
-
-**Vendored from Digital Asset:** the DAML SDK (pulled from `digital-asset/daml` releases), DAML
-Finance (built from source at a pinned commit), the `dpm` CLI (pulled from DA's OCI registry), the
-bundled DAML VS Code extension, and `daml build` / `daml codegen js` themselves.
-
-**Built here:**
-
-- 🐳 **A devcontainer path at all.** DA's official [`cn-quickstart`](https://github.com/digital-asset/cn-quickstart)
-  is a Nix and direnv reference application you clone and modify, with a Gradle backend, Docker Compose
-  topology, and observability stack. This repo takes the opposite approach: a scaffolder that drops a
-  pinned Docker environment into *your* project, with nothing to clone and nothing to strip out.
-- 🔌 **`install-daml-vsix.sh`.** Locates the bundled extension across dpm cache and SDK layouts, then
-  finds whichever remote CLI is present (VS Code, VS Code Insiders, Cursor, or the raw remote CLI) and
-  installs it. This is the kind of glue that quietly eats an afternoon.
-- 💰 **DAML Finance pre built for 3.x.** The `latest` image builds it through `dpm` from a pinned
-  commit on the 3.x upgrade branch, so it is ready at first boot rather than a manual step.
-- 🤖 **All five skills.** Nothing upstream flattens codegen output into an ergonomic API, generates
-  tests from DAML scripts, generates a fully wired webapp, encodes DAML to PlantUML conventions, or
-  formalizes the on ledger versus off ledger decision.
-- 📌 **Relevant for 3.x specifically:** DA's official `@daml/react`, `@daml/ledger`, and `@daml/types`
-  npm packages are published for the 2.x line only (latest is 2.10.6). If you are on SDK 3.x, there is
-  no official React binding to reach for, which is exactly the gap the generated SDK fills.
-- ⚙️ **CI that reads its own config.** `test-devcontainers.yml` pulls `DAML_SDK_VERSION`, `dockerfile`,
-  and `context` straight out of each `devcontainer.json`, so bumping the SDK needs no workflow edit.
 
 ---
 
