@@ -13,12 +13,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/canton-dev/canton-dev.git",
+    "url": "git+https://github.com/Moonsong-Labs/canton-dev.git",
     "directory": "packages/canton-devenv-start"
   },
-  "homepage": "https://github.com/canton-dev/canton-dev/tree/main/packages/canton-devenv-start",
+  "homepage": "https://github.com/Moonsong-Labs/canton-dev/tree/main/packages/canton-devenv-start",
   "bugs": {
-    "url": "https://github.com/canton-dev/canton-dev/issues"
+    "url": "https://github.com/Moonsong-Labs/canton-dev/issues"
   },
   "keywords": [
     "daml",
